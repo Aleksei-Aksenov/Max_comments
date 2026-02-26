@@ -1,10 +1,29 @@
 const { config } = require('./config');
 
+async function getMessage(mid) {
+  const endpoint = `${config.maxApiBase}/messages?message_ids=${encodeURIComponent(mid)}`;
+  const res = await fetch(endpoint, {
+    headers: { Authorization: config.maxBotToken },
+  });
+  if (!res.ok) return null;
+  const data = await res.json().catch(() => null);
+  // Response: { messages: [ { body: { attachments: [...] } } ] }
+  return data?.messages?.[0] || null;
+}
+
 async function updateMessageAddButton({ chatId, mid, buttonText, url }) {
   const endpoint = `${config.maxApiBase}/messages?message_id=${encodeURIComponent(mid)}`;
 
+  // Fetch existing message to preserve non-keyboard attachments
+  const existing = await getMessage(mid);
+  const existingAttachments = existing?.body?.attachments || [];
+
+  // Keep all attachments except any existing inline_keyboard (we'll replace it)
+  const otherAttachments = existingAttachments.filter(a => a.type !== 'inline_keyboard');
+
   const body = {
     attachments: [
+      ...otherAttachments,
       {
         type: 'inline_keyboard',
         payload: {
