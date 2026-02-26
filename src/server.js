@@ -435,8 +435,11 @@ async function buildServer() {
           });
         }
 
-        // Tap on message body → reply
-        div.addEventListener('click', () => setReply(c));
+        // Tap on message body → reply (skip if user selected text)
+        div.addEventListener('click', () => {
+          if (window.getSelection && window.getSelection().toString().length > 0) return;
+          setReply(c);
+        });
 
         const msgs = document.getElementById('messages');
         msgs.appendChild(div);
