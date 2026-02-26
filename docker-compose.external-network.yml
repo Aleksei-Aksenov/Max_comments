@@ -1,0 +1,30 @@
+# Используй этот файл если на сервере уже запущен Traefik в другой Docker-сети
+# (например через n8n или отдельный traefik-стек).
+#
+# Запуск:
+#   docker compose -f docker-compose.yml -f docker-compose.external-network.yml up -d --build
+#
+# В переменной EXTERNAL_NETWORK укажи имя существующей сети (по умолчанию n8n_default).
+
+services:
+  traefik:
+    # Отключаем traefik из основного compose — он уже запущен отдельно
+    profiles:
+      - disabled
+
+  max-comments-server:
+    networks:
+      - external_net
+
+  max-comments-worker:
+    networks:
+      - external_net
+
+networks:
+  max_comments_net:
+    # Переопределяем внутреннюю сеть — она больше не нужна
+    driver: bridge
+    internal: true
+  external_net:
+    name: ${EXTERNAL_NETWORK:-n8n_default}
+    external: true

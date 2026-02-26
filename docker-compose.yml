@@ -1,0 +1,65 @@
+services:
+  traefik:
+    image: traefik:v2.11
+    restart: unless-stopped
+    command:
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      - --certificatesresolvers.mytlschallenge.acme.tlschallenge=true
+      - --certificatesresolvers.mytlschallenge.acme.email=${ACME_EMAIL}
+      - --certificatesresolvers.mytlschallenge.acme.storage=/letsencrypt/acme.json
+      - --entrypoints.web.http.redirections.entryPoint.to=websecure
+      - --entrypoints.web.http.redirections.entryPoint.scheme=https
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - letsencrypt:/letsencrypt
+    networks:
+      - max_comments_net
+
+  max-comments-server:
+    build: .
+    restart: unless-stopped
+    expose:
+      - "3000"
+    env_file: .env
+    environment:
+      DB_PATH: /data/data.sqlite
+    volumes:
+      - sqlite_data:/data
+    networks:
+      - max_comments_net
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.max-comments.rule=Host(`${DOMAIN}`)
+      - traefik.http.routers.max-comments.tls=true
+      - traefik.http.routers.max-comments.entrypoints=websecure
+      - traefik.http.routers.max-comments.tls.certresolver=mytlschallenge
+      - traefik.http.services.max-comments.loadbalancer.server.port=3000
+      - traefik.http.middlewares.max-comments-sse.headers.customResponseHeaders.X-Accel-Buffering=no
+      - traefik.http.routers.max-comments.middlewares=max-comments-sse@docker
+
+  max-comments-worker:
+    build: .
+    restart: unless-stopped
+    command: node src/bot_worker.js
+    env_file: .env
+    environment:
+      DB_PATH: /data/data.sqlite
+    volumes:
+      - sqlite_data:/data
+    networks:
+      - max_comments_net
+    depends_on:
+      - max-comments-server
+
+volumes:
+  sqlite_data:
+  letsencrypt:
+
+networks:
+  max_comments_net:

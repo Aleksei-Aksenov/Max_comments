@@ -1,0 +1,24 @@
+{
+  "name": "max_comments",
+  "version": "1.0.0",
+  "description": "Comments for MAX channels via mini-app",
+  "main": "src/server.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node src/server.js",
+    "bot:listen": "node src/bot_listen.js",
+    "bot:worker": "node src/bot_worker.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "better-sqlite3": "^11.8.0",
+    "dotenv": "^16.4.5",
+    "fastify": "^4.28.1",
+    "@maxhub/max-bot-api": "^0.2.2"
+  }
+}
