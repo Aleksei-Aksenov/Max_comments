@@ -1,4 +1,5 @@
 const channels = new Map();
+const subscribers = new Map();
 
 function getChannelKey(channelId, mid) {
   return `${channelId}:${mid}`;
@@ -28,8 +29,22 @@ function publishComment({ channelId, mid, comment }) {
   }
 }
 
+function publishReaction({ channelId, mid, reaction }) {
+  const key = getChannelKey(channelId, mid);
+  const set = channels.get(key);
+
+  if (!set) return;
+
+  const payload = `event: reaction\ndata: ${JSON.stringify(reaction)}\n\n`;
+
+  for (const reply of set) {
+    reply.raw.write(payload);
+  }
+}
+
 module.exports = {
   addSubscriber,
   removeSubscriber,
   publishComment,
+  publishReaction, 
 };

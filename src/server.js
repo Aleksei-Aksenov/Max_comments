@@ -7,12 +7,16 @@ const {
   isMember,
   getThreadByChannelMid,
   getThreadByToken,
+  getThreadById,
   addComment,
   getComments,
   getCommentById,
   getMembersStats,
+  toggleReaction,
+  getReactionsByCommentIdWithUser,
+  db
 } = require('./db');
-const { addSubscriber, removeSubscriber, publishComment } = require('./realtime');
+const { addSubscriber, removeSubscriber, publishComment, publishReaction } = require('./realtime');
 const {
   handleMessageCreated,
   handleUserAdded,
@@ -25,31 +29,18 @@ async function buildServer() {
   const app = Fastify({ logger: true });
 
   app.post('/api/webhook', async (request, reply) => {
-    request.log.info({ body: request.body }, 'Webhook received');
-    const updates = Array.isArray(request.body) ? request.body : [request.body];
+    console.log('🔥 FULL UPDATE:', JSON.stringify(request.body, null, 2));
 
-    const results = [];
-    for (const update of updates) {
-      const type = update.update_type || update.event_context?.type;
-      try {
-        request.log.info({ type }, 'Processing update');
-        if (type === 'message_created') {
-          results.push({ type, ...(await handleMessageCreated(update)) });
-        } else if (type === 'user_added') {
-          results.push({ type, ...handleUserAdded(update) });
-        } else if (type === 'user_removed') {
-          results.push({ type, ...handleUserRemoved(update) });
-        } else {
-          results.push({ type, skipped: true });
-        }
-      } catch (error) {
-        request.log.error({ err: error }, 'Webhook handler error');
-        results.push({ type, error: error.message });
-      }
-    }
-
-    return reply.send({ ok: true, results });
+    return reply.send({
+      ok: true,
+      received: request.body
+    });
   });
+
+  app.get('/', async (request, reply) => {
+  const query = request.url.includes('?') ? request.url.slice(request.url.indexOf('?')) : '';
+  return reply.redirect('/miniapp' + query);
+});
 
   app.get('/health', async () => ({ ok: true }));
 
@@ -69,6 +60,7 @@ async function buildServer() {
         display: flex;
         flex-direction: column;
         overflow: hidden;
+        -webkit-touch-callout: none;
       }
 
       /* ── Loading ── */
@@ -112,7 +104,10 @@ async function buildServer() {
         display: none;
         flex-direction: column;
         overflow: hidden;
+        width: 100%;
+        max-width: 100%;
       }
+
       #messages {
         flex: 1;
         overflow-y: auto;
@@ -120,6 +115,7 @@ async function buildServer() {
         display: flex;
         flex-direction: column;
         gap: 6px;
+        width: 100%;
       }
       .no-comments {
         margin: auto;
@@ -129,14 +125,16 @@ async function buildServer() {
         padding: 32px;
       }
       .msg {
-        max-width: 78%;
+        max-width: 85%;
         padding: 8px 12px;
         border-radius: 18px;
         word-break: break-word;
         background: #fff;
         align-self: flex-start;
         box-shadow: 0 1px 1px rgba(0,0,0,.07);
+        position: relative;
       }
+
       .msg.own {
         align-self: flex-end;
         background: #007aff;
@@ -230,37 +228,508 @@ async function buildServer() {
         font-size: 14px;
         color: #fff;
         line-height: 1;
+  }
+      .reactions {
+        margin-top: 4px;
+      }
+
+      .like-btn {
+        background: transparent;
+        border: none;
+        font-size: 13px;
+        cursor: pointer;
+        color: #8e8e93;
+      }
+
+      .like-btn.liked {
+        color: #007aff;
+        font-weight: 600;
+      }
+
+      .reactions-container {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-top: 6px;
+      }
+
+      .reaction-btn, .reaction-add-btn {
+        background: rgba(0,0,0,0.05);
+        border: none;
+        border-radius: 20px;
+        padding: 3px 8px;
+        font-size: 13px;
+        cursor: pointer;
+        transition: all 0.2s;
+      }
+
+      .reaction-btn.active {
+        background: #007aff20;
+        color: #007aff;
+      }
+
+      .reaction-btn:hover, .reaction-add-btn:hover {
+        background: rgba(0,0,0,0.1);
+      }
+
+      .reaction-count {
+        margin-left: 3px;
+        font-size: 11px;
+      }
+
+      .reactions-menu {
+        position: fixed;
+        background: #1c1c1e;
+        border-radius: 30px;
+        padding: 8px 12px;
+        display: flex;
+        gap: 12px;
+        z-index: 10000;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+      }
+
+      .reactions-menu span {
+        font-size: 28px;
+        cursor: pointer;
+        padding: 4px;
+        transition: transform 0.1s;
+      }
+
+      .reactions-menu span:hover {
+        transform: scale(1.2);
+      }
+
+      /* Post header */
+      .post-header {
+        margin: 10px 12px 6px;
+        padding: 12px 14px;
+        background: #ffffff;
+        border-radius: 14px;
+        box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+        font-size: 15px;
+        color: #1c1c1e;
+        line-height: 1.45;
+        flex-shrink: 0;
+        word-break: break-word;
+        position: relative;
+      }
+      .post-header strong {
+        display: block;
+        margin-bottom: 4px;
+        color: #8e8e93;
+        font-weight: 500;
+      }
+      .post-title {
+        font-size: 12px;
+        color: #8e8e93;
+        margin-bottom: 6px;
+        font-weight: 500;
+      }
+      .post-text {
+        font-size: 15px;
+        color: #1c1c1e;
+        max-height: 80px;
+        overflow: hidden;
+        position: relative;
+      }
+
+      .post-text.expanded {
+        max-height: none;
+      }
+      .post-expand {
+        margin-top: 6px;
+        font-size: 13px;
+        color: #007aff;
+        cursor: pointer;
+        user-select: none;
+      }
+      .post-text:not(.expanded)::after {
+        content: "";
+        position: absolute;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        height: 24px;
+        background: linear-gradient(to bottom, rgba(255,255,255,0), #fff);
+      }
+      .post-top {
+        display: flex;
+        align-items: center;
+        margin-bottom: 8px;
+      }
+
+      .post-avatar {
+        width: 34px;
+        height: 34px;
+        border-radius: 50%;
+        background: #e5e5ea;
+        margin-right: 10px;
+        flex-shrink: 0;
+      }
+
+      .post-meta {
+        display: flex;
+        flex-direction: column;
+      }
+
+      .post-channel {
+        font-size: 14px;
+        font-weight: 600;
+        color: #1c1c1e;
+      }
+
+      .post-time {
+        font-size: 12px;
+        color: #8e8e93;
+      }
+
+      /* Модальное окно с затемнением */
+      .modal-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0, 0, 0, 0.5);
+        backdrop-filter: blur(4px);
+        z-index: 99999;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      .reactions-modal {
+        position: absolute;
+        background: #2c2c2e;
+        border-radius: 14px;
+        overflow: hidden;
+        box-shadow: 0 8px 20px rgba(0,0,0,0.3);
+        min-width: 260px;
+        max-width: 90vw;
+        z-index: 100000;
+      }
+
+      .modal-reactions {
+        display: flex;
+        gap: 12px;
+        padding: 12px 16px;
+        border-bottom: 0.5px solid rgba(255,255,255,0.1);
+        background: #2c2c2e;
+        flex-wrap: wrap;
+        justify-content: center;
+      }
+
+      .modal-reaction-btn {
+        background: transparent;
+        border: none;
+        font-size: 32px;
+        cursor: pointer;
+        padding: 6px 10px;
+        transition: transform 0.1s;
+      }
+
+      .modal-reaction-btn:active {
+        transform: scale(1.2);
+      }
+
+      .modal-actions {
+        display: flex;
+        flex-direction: column;
+        background: #1c1c1e;
+      }
+
+      .modal-action-btn {
+        background: transparent;
+        border: none;
+        padding: 14px 20px;
+        text-align: left;
+        font-size: 16px;
+        color: #ffffff;
+        cursor: pointer;
+        transition: background 0.1s;
+      }
+
+      .modal-action-btn:active {
+        background: rgba(255,255,255,0.1);
+      }
+
+      .post-image {
+        margin-top: 10px;
+        border-radius: 12px;
+        overflow: hidden;
+      }
+
+      .post-image img {
+        width: 100%;
+        max-height: 220px;
+        object-fit: cover;
+        display: block;
+      }      
+
+      /* Toast уведомления */
+      .toast {
+        position: fixed;
+        bottom: 100px;
+        left: 50%;
+        transform: translateX(-50%);
+        background: rgba(0,0,0,0.85);
+        color: white;
+        padding: 10px 20px;
+        border-radius: 25px;
+        font-size: 14px;
+        z-index: 10002;
+        white-space: nowrap;
+        max-width: 90vw;
+        white-space: normal;
+        text-align: center;
+        pointer-events: none;
+      }
+
+      /* Кнопка смайлика */
+      .emoji-btn {
+        flex-shrink: 0;
+        width: 40px;
+        height: 40px;
+        border-radius: 50%;
+        border: none;
+        background: #f2f2f7;
+        cursor: pointer;
+        font-size: 22px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: background 0.2s;
+      }
+
+      .emoji-btn:hover {
+        background: #e5e5ea;
+      }
+
+      /* Панель выбора эмодзи */
+      .emoji-picker {
+        position: fixed;
+        background: #1c1c1e;
+        border-radius: 30px;
+        padding: 10px 16px;
+        display: flex;
+        gap: 12px;
+        z-index: 10000;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        flex-wrap: wrap;
+        max-width: 90vw;
+      }
+
+      .emoji-picker-btn {
+        background: transparent;
+        border: none;
+        font-size: 28px;
+        cursor: pointer;
+        padding: 6px;
+        transition: transform 0.1s;
+      }
+
+      .emoji-picker-btn:hover {
+        transform: scale(1.2);
+      }
+
+      /* Реакции под комментарием */
+      .reactions-container {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-top: 6px;
+      }
+
+      .reaction-btn {
+        background: rgba(0,0,0,0.05);
+        border: none;
+        border-radius: 20px;
+        padding: 4px 10px;
+        font-size: 14px;
+        cursor: pointer;
+        transition: all 0.2s;
+      }
+
+      .reaction-btn.active {
+        background: #007aff20;
+        color: #007aff;
+      }
+
+      .reaction-count {
+        margin-left: 4px;
+        font-size: 12px;
+      }
+
+      /* Мобильная адаптация */
+      @media (max-width: 768px) {
+
+        .msg {
+          max-width: 90%;
+          -webkit-user-select: none;
+          user-select: none;
+        }
+
+        .msg .text {
+          -webkit-user-select: text;
+          user-select: text;
+        }
+        
+        .reactions-modal {
+          min-width: 240px;
+        }
+        
+        .modal-reaction-btn {
+          font-size: 28px;
+          padding: 4px 8px;
+        }
+        
+        .modal-action-btn {
+          padding: 12px 16px;
+          font-size: 15px;
+        }
+        
+        .emoji-picker {
+          padding: 8px 12px;
+          gap: 8px;
+        }
+        
+        .emoji-picker-btn {
+          font-size: 24px;
+        }
+      }
+      
+      /* Улучшенный скролл */
+      #messages::-webkit-scrollbar {
+        width: 6px;
+      }
+
+      #messages::-webkit-scrollbar-track {
+        background: #f1f1f1;
+        border-radius: 3px;
+      }
+
+      #messages::-webkit-scrollbar-thumb {
+        background: #c1c1c1;
+        border-radius: 3px;
+      }
+
+      #messages::-webkit-scrollbar-thumb:hover {
+        background: #a8a8a8;
       }
 
       /* ── Input area ── */
       #input-bar {
         background: #fff;
         border-top: 1px solid rgba(0,0,0,.1);
-        padding: 8px 10px;
+        padding: 8px 12px;
         padding-bottom: max(8px, env(safe-area-inset-bottom));
         display: flex;
-        align-items: flex-end;
+        align-items: center;
         gap: 8px;
+        width: 100%;
       }
+
+      .input-wrapper {
+        flex: 1;
+        position: relative;
+        display: flex;
+        align-items: center;
+      }
+
       #msg-input {
         flex: 1;
         border: 1px solid #d1d1d6;
         border-radius: 20px;
-        padding: 8px 14px;
+        padding: 10px 48px 10px 14px;
         font-size: 15px;
         font-family: inherit;
         outline: none;
         resize: none;
         line-height: 1.4;
-        min-height: 36px;
+        min-height: 40px;
         max-height: 120px;
         overflow-y: auto;
         background: #f2f2f7;
+        width: 100%;
       }
-      #msg-input:focus { border-color: #007aff; background: #fff; }
+
+      #msg-input:focus { 
+        border-color: #007aff; 
+        background: #fff; 
+      }
+
+
+      #send-btn:disabled { 
+        opacity: .4; 
+        cursor: default; 
+      }
+
+      #send-btn svg { 
+        width: 16px; 
+        height: 16px; 
+        fill: #fff; 
+      }
+
+      .emoji-btn {
+        flex-shrink: 0;
+        width: 40px;
+        height: 40px;
+        border-radius: 50%;
+        border: none;
+        background: #f2f2f7;
+        cursor: pointer;
+        font-size: 22px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: background 0.2s;
+      }
+
+      /* Кнопка смайлика */
+      .emoji-btn {
+        flex-shrink: 0;
+        width: 40px;
+        height: 40px;
+        border-radius: 50%;
+        border: none;
+        background: #f2f2f7;
+        cursor: pointer;
+        font-size: 22px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: background 0.2s;
+      }
+
+      .emoji-btn:hover {
+        background: #e5e5ea;
+      }
+
+      #msg-input {
+        flex: 1;
+        border: 1px solid #d1d1d6;
+        border-radius: 20px;
+        padding: 10px 14px;
+        font-size: 15px;
+        font-family: inherit;
+        outline: none;
+        resize: none;
+        line-height: 1.4;
+        min-height: 40px;
+        max-height: 120px;
+        overflow-y: auto;
+        background: #f2f2f7;
+        width: 100%;
+      }
+      #msg-input:focus { 
+        border-color: #007aff; 
+        background: #fff; 
+      }
+
       #send-btn {
         flex-shrink: 0;
-        width: 36px; height: 36px;
+        width: 40px;
+        height: 40px;
         border-radius: 50%;
         border: none;
         background: #007aff;
@@ -270,8 +739,24 @@ async function buildServer() {
         justify-content: center;
         transition: opacity .15s;
       }
-      #send-btn:disabled { opacity: .4; cursor: default; }
-      #send-btn svg { width: 17px; height: 17px; fill: #fff; }
+
+      #send-btn:disabled { 
+        opacity: .4; 
+        cursor: default; 
+      }
+
+      #send-btn svg { 
+        width: 18px; 
+        height: 18px; 
+        fill: #fff; 
+      }
+
+      .reaction {
+        position: fixed;
+        font-size: 24px;
+        pointer-events: none;
+        transition: transform 0.7s ease-out, opacity 0.7s ease-out;
+      }
     </style>
   </head>
   <body>
@@ -298,10 +783,13 @@ async function buildServer() {
         <button id="reply-cancel">✕</button>
       </div>
       <div id="input-bar">
-        <textarea id="msg-input" rows="1" placeholder="Написать комментарий…"></textarea>
-        <button id="send-btn" disabled>
-          <svg viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
-        </button>
+        <button id="emoji-btn" class="emoji-btn">😊</button>
+        <div class="input-wrapper">
+          <textarea id="msg-input" rows="1" placeholder="Написать комментарий…"></textarea>
+          <button id="send-btn" disabled>
+            <svg viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
+          </button>
+        </div>
       </div>
     </div>
 
@@ -316,6 +804,42 @@ async function buildServer() {
         return String(s)
           .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
       }
+
+      document.addEventListener('selectstart', (e) => {
+        if (e.target.closest('.msg')) {
+          e.preventDefault();
+        }
+      });
+
+      function showFloatingEmoji(emoji, x, y) {
+        const el = document.createElement('div');
+        el.textContent = emoji;
+
+        el.style.position = 'fixed';
+        el.style.left = x + 'px';
+        el.style.top = y + 'px';
+        el.style.fontSize = '28px';
+        el.style.pointerEvents = 'none';
+        el.style.zIndex = '99999';
+
+        // Рандомная длительность
+        const duration = 0.5 + Math.random() * 0.3;
+        el.style.transition = 'transform ' + duration + 's ease-out, opacity ' + duration + 's ease-out';
+
+        document.body.appendChild(el);
+
+        // Рандом по X и вращение
+        const offsetX = (Math.random() - 0.5) * 30;
+        const rotate = (Math.random() - 0.5) * 60;
+
+        requestAnimationFrame(function() {
+          el.style.transform = 'translate(' + offsetX + 'px, -60px) scale(1.3) rotate(' + rotate + 'deg)';
+          el.style.opacity = '0';
+        });
+
+        setTimeout(function() { el.remove(); }, duration * 1000);
+      }
+
       function fmt(ts) {
         return new Date(ts).toLocaleTimeString('ru-RU', {hour:'2-digit', minute:'2-digit'});
       }
@@ -334,14 +858,72 @@ async function buildServer() {
         if (st) st.textContent = title;
         if (sx) sx.textContent = text;
       }
-      function showChat() {
+      function showChat(session) {
         const loading = document.getElementById('loading');
         const sc      = document.getElementById('status-screen');
         const chat    = document.getElementById('chat');
         if (!chat) return;
+        
+        // Удаляем существующий header
+        const existingHeader = document.querySelector('.post-header');
+        if (existingHeader) existingHeader.remove();
+
+        if (session?.thread) {
+          const header = document.createElement('div');
+          header.className = 'post-header';
+
+          const text = session.thread.text || '';
+          const image = session.thread.image_url || '';
+
+          header.innerHTML =
+            '<div class="post-top">' +
+              '<div class="post-avatar"></div>' +
+              '<div class="post-meta">' +
+                '<div class="post-channel">Канал</div>' +
+                '<div class="post-time">' + fmt(Date.now()) + '</div>' +
+              '</div>' +
+            '</div>' +
+
+            // 🖼 КАРТИНКА
+            (image ? 
+              '<div class="post-image">' +
+                '<img src="' + image + '" />' +
+              '</div>'
+            : '') +
+
+            // 📝 ТЕКСТ
+            (text ? 
+              '<div class="post-text" id="post-text">' + esc(text) + '</div>' +
+              '<div class="post-expand" id="post-expand" style="display:none;">Показать ещё</div>'
+            : '');
+
+          // expand логика
+          const postTextEl = header.querySelector('#post-text');
+          const expandBtn = header.querySelector('#post-expand');
+
+          if (postTextEl && expandBtn && postTextEl.scrollHeight > 80) {
+            expandBtn.style.display = 'block';
+
+            expandBtn.addEventListener('click', () => {
+              const expanded = postTextEl.classList.toggle('expanded');
+              expandBtn.textContent = expanded ? 'Скрыть' : 'Показать ещё';
+            });
+          }
+
+          document.body.prepend(header);
+        }
+        
         if (loading) loading.style.display = 'none';
         if (sc)      sc.style.display      = 'none';
         chat.style.display = 'flex';
+      }
+
+      function showToast(message) {
+        const toast = document.createElement('div');
+        toast.className = 'toast';
+        toast.textContent = message;
+        document.body.appendChild(toast);
+        setTimeout(() => toast.remove(), 2000);
       }
 
       // ── initData & startParam ────────────────────────────────
@@ -363,7 +945,6 @@ async function buildServer() {
         const getUrl = '/api/session?initData=' + encodeURIComponent(initData)
           + '&startParam=' + encodeURIComponent(startParam);
 
-        // Try POST with 5s timeout; MAX webview often blocks/hangs JSON POST
         try {
           const ac = new AbortController();
           const tid = setTimeout(() => ac.abort(), 5000);
@@ -386,9 +967,136 @@ async function buildServer() {
       // ── comments ─────────────────────────────────────────────
       let myUserId = null;
       const rendered = new Set();
-
-      // Map of id → comment data for reply quotes
       const commentsById = new Map();
+      let activeModal = null;
+
+      function closeModal() {
+        if (activeModal) {
+          document.querySelectorAll('.msg-highlight').forEach(el => {
+            el.classList.remove('msg-highlight');
+          });
+          activeModal.remove();
+          activeModal = null;
+        }
+      }
+
+      function showReactionsModal(c, element, clientX = null, clientY = null) {
+        closeModal();
+        
+        const overlay = document.createElement('div');
+        overlay.className = 'modal-overlay';
+        
+        const modal = document.createElement('div');
+        modal.className = 'reactions-modal';
+        
+        const reactionsRow = document.createElement('div');
+        reactionsRow.className = 'modal-reactions';
+        const emojis = ['👍', '❤️', '😂', '🔥', '😢', '😮'];
+        emojis.forEach(emoji => {
+          const btn = document.createElement('button');
+          btn.className = 'modal-reaction-btn';
+          btn.textContent = emoji;
+          btn.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            await sendReaction(c.id, emoji);
+            closeModal();
+          });
+          reactionsRow.appendChild(btn);
+        });
+        
+        const actionsDiv = document.createElement('div');
+        actionsDiv.className = 'modal-actions';
+        
+        const replyBtn = document.createElement('button');
+        replyBtn.className = 'modal-action-btn';
+        replyBtn.innerHTML = '💬 Ответить';
+        replyBtn.addEventListener('click', () => {
+          setReply(c);
+          closeModal();
+        });
+        
+        const copyTextBtn = document.createElement('button');
+        copyTextBtn.className = 'modal-action-btn';
+        copyTextBtn.innerHTML = '📋 Копировать текст';
+        copyTextBtn.addEventListener('click', () => {
+          navigator.clipboard.writeText(c.text);
+          showToast('Текст скопирован');
+          closeModal();
+        });
+        
+        const copyLinkBtn = document.createElement('button');
+        copyLinkBtn.className = 'modal-action-btn';
+        copyLinkBtn.innerHTML = '🔗 Копировать ссылку';
+        copyLinkBtn.addEventListener('click', () => {
+          const link = window.location.href + '?comment=' + c.id;
+          navigator.clipboard.writeText(link);
+          showToast('Ссылка скопирована');
+          closeModal();
+        });
+        
+        actionsDiv.appendChild(replyBtn);
+        actionsDiv.appendChild(copyTextBtn);
+        actionsDiv.appendChild(copyLinkBtn);
+        
+        modal.appendChild(reactionsRow);
+        modal.appendChild(actionsDiv);
+        overlay.appendChild(modal);
+        document.body.appendChild(overlay);
+        
+        // Получаем позицию элемента и размеры окна
+        const rect = element.getBoundingClientRect();
+        const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
+        const scrollLeft = window.pageXOffset || document.documentElement.scrollLeft;
+        
+        // Ждем рендеринга модалки для получения ее размеров
+        setTimeout(() => {
+          const modalRect = modal.getBoundingClientRect();
+          const modalHeight = modalRect.height;
+          const modalWidth = modalRect.width;
+          
+          let top, left;
+          
+          if (clientX && clientY) {
+            // ПК: позиционируем относительно курсора
+            left = clientX - modalWidth / 2;
+            top = clientY - modalHeight - 10;
+          } else {
+            // Мобильные: под комментарием
+            left = rect.left + (rect.width - modalWidth) / 2;
+            top = rect.bottom + scrollTop + 10;
+          }
+          
+          // Проверяем выход за левый край
+          if (left < 10) left = 10;
+          // Проверяем выход за правый край
+          if (left + modalWidth > window.innerWidth - 10) {
+            left = window.innerWidth - modalWidth - 10;
+          }
+          // Если не помещается снизу, показываем сверху
+          if (top + modalHeight > window.innerHeight + scrollTop - 50) {
+            if (clientX && clientY) {
+              top = clientY + 10;
+            } else {
+              top = rect.top + scrollTop - modalHeight - 10;
+            }
+          }
+          // Проверяем выход за верхний край
+          if (top < scrollTop + 10) {
+            top = scrollTop + 10;
+          }
+          
+          modal.style.left = left + 'px';
+          modal.style.top = top + 'px';
+        }, 10);
+        
+        activeModal = overlay;
+        
+        overlay.addEventListener('click', (e) => {
+          if (e.target === overlay) closeModal();
+        });
+        
+        element.classList.add('msg-highlight');
+      }
 
       function renderComment(c) {
         if (rendered.has(c.id)) return;
@@ -407,7 +1115,6 @@ async function buildServer() {
 
         let html = '';
 
-        // Reply quote
         if (c.reply_to_id) {
           const rName = c.reply_to_name || c.reply_to_id;
           const rText = c.reply_to_text || '…';
@@ -419,31 +1126,149 @@ async function buildServer() {
 
         html += '<div class="author">' + esc(c.name || c.user_id) + '</div>'
           + '<div class="text">' + esc(c.text) + '</div>'
-          + '<div class="ts">'   + fmt(c.created_at)        + '</div>';
+          + '<div class="ts">' + fmt(c.created_at) + '</div>'
+          + '<div class="reactions-container" data-id="' + c.id + '"></div>';
 
         div.innerHTML = html;
-
-        // Tap on quote → scroll to original message
-        if (c.reply_to_id) {
-          div.querySelector('.reply-quote').addEventListener('click', (e) => {
-            e.stopPropagation();
-            const target = document.querySelector('.msg[data-id="' + c.reply_to_id + '"]');
-            if (!target) return;
-            target.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            target.classList.add('msg-highlight');
-            setTimeout(() => target.classList.remove('msg-highlight'), 1200);
-          });
+        
+        const reactionsContainer = div.querySelector('.reactions-container');
+        if (reactionsContainer && c.reactions && Object.keys(c.reactions).length > 0) {
+          renderReactions(c, reactionsContainer);
+        } else if (reactionsContainer) {
+          reactionsContainer.style.display = 'none';
         }
-
-        // Tap on message body → reply (skip if user selected text)
-        div.addEventListener('click', () => {
-          if (window.getSelection && window.getSelection().toString().length > 0) return;
-          setReply(c);
+        
+        let pressTimer;
+        
+        div.addEventListener('touchstart', (e) => {
+          pressTimer = setTimeout(() => {
+            const touch = e.touches[0];
+            showReactionsModal(c, div, touch.clientX, touch.clientY);
+          }, 500);
         });
+        
+        div.addEventListener('touchend', () => {
+          clearTimeout(pressTimer);
+        });
+        
+        div.addEventListener('touchmove', () => {
+          clearTimeout(pressTimer);
+        });
+        
+        div.addEventListener('contextmenu', (e) => {
+          e.preventDefault();
+          showReactionsModal(c, div, e.clientX, e.clientY);
+        });
+        
+        if (c.reply_to_id) {
+          const quote = div.querySelector('.reply-quote');
+          if (quote) {
+            quote.addEventListener('click', (e) => {
+              e.stopPropagation();
+              const target = document.querySelector('.msg[data-id="' + c.reply_to_id + '"]');
+              if (!target) return;
+              target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+              target.classList.add('msg-highlight');
+              setTimeout(() => target.classList.remove('msg-highlight'), 1200);
+            });
+          }
+        }
 
         const msgs = document.getElementById('messages');
         msgs.appendChild(div);
         msgs.scrollTop = msgs.scrollHeight;
+      }
+
+      function renderReactions(c, container) {
+        if (!container) return;
+
+        const reactions = c.reactions || {};
+
+        // если нет реакций — скрываем блок
+        if (Object.keys(reactions).length === 0) {
+          container.style.display = 'none';
+          return;
+        }
+
+        container.style.display = 'flex';
+        container.innerHTML = '';
+
+        for (const [emoji, data] of Object.entries(reactions)) {
+          const btn = document.createElement('button');
+          btn.className = 'reaction-btn';
+
+          if (data.liked) {
+            btn.classList.add('active');
+          }
+
+          // используем textContent и createElement вместо innerHTML
+          btn.textContent = emoji + ' ';
+          const countSpan = document.createElement('span');
+          countSpan.className = 'reaction-count';
+          countSpan.textContent = data.count;
+          btn.appendChild(countSpan);
+
+          btn.addEventListener('click', async (e) => {
+            e.stopPropagation();
+
+            // 💥 координаты клика
+            const rect = btn.getBoundingClientRect();
+
+            // 🎈 показываем "вылетающий" emoji
+            showFloatingEmoji(
+              emoji,
+              rect.left + rect.width / 2,
+              rect.top
+            );
+
+            // 💥 анимация кнопки
+            btn.animate([
+              { transform: 'scale(1)' },
+              { transform: 'scale(1.3)' },
+              { transform: 'scale(1)' }
+            ], {
+              duration: 200,
+              easing: 'ease-out'
+            });
+
+            await sendReaction(c.id, emoji);
+          });
+
+          container.appendChild(btn);
+        }
+      }
+
+      async function sendReaction(commentId, emoji) {
+        console.log('Sending reaction:', { commentId, emoji, initData: !!initData });
+        try {
+          const res = await fetch('/api/comments/' + commentId + '/reaction', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ initData, emoji })
+          });
+          const data = await res.json();
+          console.log('Reaction response:', data);
+          if (data.ok) {
+            const msgDiv = document.querySelector('.msg[data-id="' + commentId + '"]');
+            if (msgDiv) {
+              const comment = commentsById.get(commentId);
+              if (comment) {
+                // Обновляем реакции из ответа сервера
+                comment.reactions = data.reactions;
+                const container = msgDiv.querySelector('.reactions-container');
+                if (container) {
+                  renderReactions(comment, container);
+                }
+              }
+            }
+          } else {
+            console.error('Failed to send reaction:', data);
+            showToast('Ошибка при отправке реакции');
+          }
+        } catch (err) {
+          console.error('Failed to send reaction:', err);
+          showToast('Ошибка соединения');
+        }
       }
 
       let lastId = 0;
@@ -464,7 +1289,6 @@ async function buildServer() {
         const base = '/api/threads/' + session.thread.channel_id + '/' + session.thread.mid;
         const commentsUrl = base + '/comments?initData=' + encodeURIComponent(initData);
 
-        // Polling fallback: fetch new comments by last seen id
         let pollingTimer = null;
         function startPolling() {
           if (pollingTimer) return;
@@ -479,7 +1303,6 @@ async function buildServer() {
           }, 3000);
         }
 
-        // Try SSE first; fall back to polling if ping doesn't arrive in 5s
         const sseUrl = base + '/stream?initData=' + encodeURIComponent(initData);
         let sseOk = false;
         const fallbackTimer = setTimeout(() => { if (!sseOk) startPolling(); }, 5000);
@@ -496,6 +1319,26 @@ async function buildServer() {
             lastId = Math.max(lastId, c.id);
           } catch {}
         });
+
+        es.addEventListener('reaction', (e) => {
+          try {
+            const r = JSON.parse(e.data);
+            const msg = document.querySelector('.msg[data-id="' + r.commentId + '"]');
+            if (!msg) return;
+            
+            const comment = commentsById.get(r.commentId);
+            if (comment) {
+              comment.reactions = r.reactions;
+              const container = msg.querySelector('.reactions-container');
+              if (container) {
+                renderReactions(comment, container);
+              }
+            }
+          } catch (err) {
+            console.error('Failed to process reaction event:', err);
+          }
+        });
+
         es.onerror = () => {
           if (!pollingTimer) {
             es.close();
@@ -505,7 +1348,7 @@ async function buildServer() {
       }
 
       // ── reply state ──────────────────────────────────────────
-      let replyTo = null; // { id, name, text }
+      let replyTo = null;
 
       function setReply(c) {
         replyTo = { id: c.id, name: c.name || c.user_id, text: c.text };
@@ -554,7 +1397,6 @@ async function buildServer() {
           );
           const d = await r.json();
           if (d.ok && d.comment) {
-            // Attach reply metadata for immediate render (server returns id only)
             if (replyTo) {
               d.comment.reply_to_id   = replyTo.id;
               d.comment.reply_to_name = replyTo.name;
@@ -568,6 +1410,62 @@ async function buildServer() {
         } finally {
           sendBtn.disabled = !input.value.trim();
         }
+      }
+
+      // ── emoji button ─────────────────────────────────────────
+      const emojiBtn = document.getElementById('emoji-btn');
+      let emojiPickerActive = false;
+      let emojiPickerModal = null;
+
+      function closeEmojiPicker() {
+        if (emojiPickerModal) {
+          emojiPickerModal.remove();
+          emojiPickerModal = null;
+        }
+        emojiPickerActive = false;
+      }
+
+      if (emojiBtn) {
+        emojiBtn.addEventListener('click', () => {
+          if (emojiPickerActive) {
+            closeEmojiPicker();
+            return;
+          }
+          
+          const picker = document.createElement('div');
+          picker.className = 'emoji-picker';
+          
+          const emojis = ['👍', '❤️', '😂', '🔥', '😢', '😮', '🎉', '👏', '💯', '🙏'];
+          emojis.forEach(emoji => {
+            const btn = document.createElement('button');
+            btn.className = 'emoji-picker-btn';
+            btn.textContent = emoji;
+            btn.addEventListener('click', () => {
+              input.value += emoji;
+              input.dispatchEvent(new Event('input'));
+              closeEmojiPicker();
+            });
+            picker.appendChild(btn);
+          });
+          
+          const rect = emojiBtn.getBoundingClientRect();
+          picker.style.position = 'fixed';
+          picker.style.bottom = (window.innerHeight - rect.top + 10) + 'px';
+          picker.style.left = rect.left + 'px';
+          
+          document.body.appendChild(picker);
+          emojiPickerActive = true;
+          emojiPickerModal = picker;
+          
+          setTimeout(() => {
+            document.addEventListener('click', function closePicker(e) {
+              if (!picker.contains(e.target) && e.target !== emojiBtn) {
+                closeEmojiPicker();
+                document.removeEventListener('click', closePicker);
+              }
+            });
+          }, 0);
+        });
       }
 
       // ── main ─────────────────────────────────────────────────
@@ -600,7 +1498,7 @@ async function buildServer() {
         currentSession = session;
         myUserId = session.user?.user_id;
         try {
-          showChat();
+          showChat(session);
           await loadComments(session);
           setupSSE(session);
         } catch (e) {
@@ -608,11 +1506,103 @@ async function buildServer() {
         }
       })();
     </script>
+
   </body>
 </html>`;
 
     reply.type('text/html').send(html);
   });
+
+  app.addHook('onRequest', async (req) => {
+    console.log('➡️ INCOMING:', req.method, req.url);
+  });
+
+  app.post('/api/comments/:id/reaction', async (request, reply) => {
+    try {
+      console.log('🔥 REACTION ENDPOINT CALLED');
+      const initData = request.body?.initData;
+      const emoji = request.body?.emoji || '👍';
+      
+      const validation = validateInitData(initData, config.maxBotToken);
+      if (!validation.ok) return reply.code(401).send(validation);
+
+      const user = extractUser(validation.data);
+      if (!user?.user_id) return reply.code(401).send({ ok: false });
+
+      const commentId = Number(request.params.id);
+      
+      // Получаем комментарий с thread_id
+      const comment = db.prepare('SELECT * FROM comments WHERE id = ?').get(commentId);
+      
+      if (!comment) {
+        return reply.code(404).send({ ok: false, error: 'comment_not_found' });
+      }
+      
+      // Получаем thread
+      const thread = db.prepare(`
+        SELECT id, channel_id, mid 
+        FROM threads 
+        WHERE id = ?
+      `).get(comment.thread_id);
+      
+      if (!thread) {
+        return reply.code(404).send({ 
+          ok: false, 
+          error: 'thread_not_found', 
+          commentId, 
+          threadId: comment.thread_id 
+        });
+      }
+
+      const result = toggleReaction({
+        commentId,
+        userId: String(user.user_id),
+        emoji,
+      });
+
+      // Получаем все реакции для комментария
+      const reactions = getReactionsByCommentIdWithUser(
+        commentId,
+        String(user.user_id)
+      );
+      
+      // Проверяем, какую реакцию поставил пользователь
+      const userReaction = db.prepare(`
+        SELECT emoji FROM reactions 
+        WHERE comment_id = ? AND user_id = ?
+      `).get(commentId, String(user.user_id));
+      
+      if (userReaction && reactions[userReaction.emoji]) {
+        reactions[userReaction.emoji].liked = true;
+      }
+
+      // Broadcast через SSE
+      publishReaction({
+        channelId: thread.channel_id,
+        mid: thread.mid,
+        reaction: {
+          commentId,
+          userId: String(user.user_id),
+          liked: result.liked,
+          emoji: result.emoji,
+          reactions,
+        },
+      });
+
+      return reply.send({
+        ok: true,
+        liked: result.liked,
+        emoji: result.emoji,
+        reactions,
+      });
+    } catch (err) {
+      console.error('Reaction error:', err);
+      return reply.code(500).send({ ok: false, error: err.message });
+    }
+  });
+
+
+
 
   app.post('/api/client-log', async (request, reply) => {
     request.log.info({ body: request.body }, 'Client log');
@@ -641,6 +1631,7 @@ async function buildServer() {
     if (!payload?.token) return reply.code(400).send({ ok: false, error: 'payload_invalid' });
 
     const thread = getThreadByToken(payload.token);
+    console.log('🔥 THREAD FROM DB:', thread);
     if (!thread) return reply.code(404).send({ ok: false, error: 'thread_not_found' });
 
     const subscribed = isMember({
@@ -655,6 +1646,10 @@ async function buildServer() {
       thread: {
         channel_id: thread.channel_id,
         mid: thread.mid,
+        text: thread.text || '',
+        created_at: thread.created_at,
+        attachments: thread.attachments ? JSON.parse(thread.attachments) : [],
+        image_url: thread.image_url || ''
       },
       user: {
         user_id: user.user_id,
@@ -685,7 +1680,15 @@ async function buildServer() {
     const afterId = Number(request.query?.after_id || 0);
     const comments = getComments({ threadId: thread.id, limit, afterId });
 
-    return reply.send({ ok: true, comments });
+    const enriched = comments.map(c => ({
+      ...c,
+      reactions: getReactionsByCommentIdWithUser(
+        c.id,
+        String(user.user_id)
+      )
+    }));
+
+    return reply.send({ ok: true, comments: enriched });
   });
 
   app.post('/api/threads/:channelId/:mid/comments', async (request, reply) => {

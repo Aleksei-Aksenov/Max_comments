@@ -8,7 +8,10 @@ async function getMessage(mid) {
   if (!res.ok) return null;
   const data = await res.json().catch(() => null);
   // Response: { messages: [ { body: { attachments: [...] } } ] }
-  return data?.messages?.[0] || null;
+  return {
+  ...data?.messages?.[0],
+  created_at: data?.messages?.[0]?.created_at
+};;
 }
 
 async function updateMessageAddButton({ chatId, mid, buttonText, url }) {
@@ -99,4 +102,4 @@ async function fetchAllChannelMembers(chatId) {
   return members;
 }
 
-module.exports = { updateMessageAddButton, fetchAllChannelMembers };
+module.exports = { updateMessageAddButton, fetchAllChannelMembers, getMessage };
