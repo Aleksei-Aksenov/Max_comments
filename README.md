@@ -1,3 +1,24 @@
+# Max Comments
+
+[![Status: Work in Progress](https://img.shields.io/badge/status-active_development-yellow)]()
+[![Based on](https://img.shields.io/badge/based%20on-konstantin--er/max__comments-blue)](https://github.com/konstantin-er/max_comments)
+
+## ⚠️ Статус проекта
+
+> Проект находится в **активной разработке**.
+> 
+> Я использую GitHub для синхронизации кода между своими компьютерами, 
+> поэтому на данный момент проект **может не собираться, не запускаться или содержать нестабильный код**.
+> 
+> **Не рекомендуется клонировать и запускать** до выхода версии v1.0.0.
+
+## Основа
+
+Проект основан на [max_comments от konstantin-er](https://github.com/konstantin-er/max_comments).  
+Благодарность автору за отличную основу!
+
+
+
 # MAX Comments
 
 Комментарии для каналов MAX через мини-приложение.
