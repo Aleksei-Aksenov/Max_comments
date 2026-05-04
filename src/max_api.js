@@ -102,4 +102,43 @@ async function fetchAllChannelMembers(chatId) {
   return members;
 }
 
-module.exports = { updateMessageAddButton, fetchAllChannelMembers, getMessage };
+// Получение информации о канале
+async function getChannelInfo(chatId) {
+  try {
+    const endpoint = `${config.maxApiBase}/chats/${encodeURIComponent(chatId)}`;
+    const res = await fetch(endpoint, {
+      headers: { 
+        Authorization: config.maxBotToken,
+        'Content-Type': 'application/json'
+      },
+    });
+    
+    if (!res.ok) {
+      console.error('Channel info error:', res.status);
+      return null;
+    }
+    
+    const data = await res.json();
+    console.log('📸 FULL CHANNEL INFO:', JSON.stringify(data, null, 2));
+    
+    // ✅ Извлекаем URL аватарки
+    let avatarUrl = '';
+    if (data.icon?.url) avatarUrl = data.icon.url;
+    else if (typeof data.icon === 'string') avatarUrl = data.icon;
+    else if (data.avatar?.url) avatarUrl = data.avatar.url;
+    else if (typeof data.avatar === 'string') avatarUrl = data.avatar;
+    else if (data.photo_url) avatarUrl = data.photo_url;
+    
+    console.log('🖼 Avatar URL:', avatarUrl);
+    
+    return {
+      title: data.title || data.name || 'Канал',
+      avatar: avatarUrl  // ✅ теперь это строка, а не объект
+    };
+  } catch (e) {
+    console.error('Failed to get channel info:', e);
+    return null;
+  }
+}
+
+module.exports = { updateMessageAddButton, fetchAllChannelMembers, getMessage, getChannelInfo };

@@ -6,7 +6,7 @@ const {
   createThread,
 } = require('./db');
 const { generateToken, encodePayload } = require('./payload');
-const { updateMessageAddButton, getMessage } = require('./max_api');
+const { updateMessageAddButton, getMessage, getChannelInfo } = require('./max_api');
 
 function extractMessageCreated(update) {
   if (!update || !update.message || !update.message.body) return null;
@@ -16,8 +16,6 @@ function extractMessageCreated(update) {
   if (!chatId || !mid || chatType !== 'channel') return null;
   return { chatId, mid };
 }
-
-
 
 async function handleMessageCreated(update) {
   const data = extractMessageCreated(update);
@@ -37,42 +35,73 @@ async function handleMessageCreated(update) {
 
     let text = '';
     let createdAt = null;
-    let attachments = [];
+    let rawAttachments = [];
     let imageUrl = '';
+    let processedAttachments = [];
+    let channelTitle = 'Канал';
+    let channelAvatar = '';
 
     try {
+      // Получаем информацию о канале
+      const channelInfo = await getChannelInfo(chatId);
+      if (channelInfo) {
+        channelTitle = channelInfo.title;
+        channelAvatar = channelInfo.avatar;
+      }
+      console.log('Channel info saved:', { channelTitle, channelAvatar });
+
       const msg = await getMessage(mid);
       console.log('RAW MESSAGE:', JSON.stringify(msg, null, 2));
 
       text = msg?.body?.text || '';
-      createdAt = msg?.timestamp || Date.now(); // ✅ FIX
-      attachments = msg?.body?.attachments || [];
+      createdAt = msg?.timestamp || Date.now();
+      rawAttachments = msg?.body?.attachments || [];
 
-      if (Array.isArray(attachments)) {
-        for (const att of attachments) {
-          if (att.type === 'image' && att.payload?.url) {
-            imageUrl = att.payload.url;
-
-            console.log('IMAGE FOUND:', att); // ✅
-            break;
+      // Обработка вложений
+      if (Array.isArray(rawAttachments)) {
+        processedAttachments = rawAttachments.map(att => {
+          if (att.type === 'image') {
+            return {
+              type: 'photo',
+              platform: 'max',
+              url: att.payload?.url || ''
+            };
           }
+          
+          if (att.type === 'video') {
+            const videoId = att.payload?.id || att.payload?.video_id;
+            return {
+              type: 'video',
+              platform: 'max',
+              video_id: videoId,
+              chat_id: String(chatId),
+              message_mid: mid,
+              preview: att.thumbnail?.url || '',
+              duration: att.duration || null
+            };
+          }
+          
+          return null;
+        }).filter(Boolean);
+        
+        const firstImage = processedAttachments.find(att => att.type === 'photo');
+        if (firstImage) {
+          imageUrl = firstImage.url;
         }
       }
-
-      console.log('IMAGE URL:', imageUrl); // ✅
-      console.log('ATTACHMENTS:', JSON.stringify(attachments, null, 2));
-
     } catch (e) {
       console.error('Failed to fetch message:', e);
     }
 
     createThread({
       channelId: String(chatId),
+      channelTitle: channelTitle,    // ← сохраняем
+      channelAvatar: channelAvatar,  // ← сохраняем
       mid,
       token,
       text,
       created_at: createdAt,
-      attachments: JSON.stringify(attachments),
+      attachments: JSON.stringify(processedAttachments),
       image_url: imageUrl
     });
   }

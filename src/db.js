@@ -70,12 +70,22 @@ try {
 } catch {
   // column already exists — ignore
 }
-  // Migration: add image_url to threads if not exists
+  // Migration: add channel_title to threads if not exists
 try {
-  db.exec(`ALTER TABLE threads ADD COLUMN image_url TEXT`);
+  db.exec(`ALTER TABLE threads ADD COLUMN channel_title TEXT`);
 } catch {
   // column already exists — ignore
 }
+  // Migration: add channel_avatar to threads if not exists
+try {
+  db.exec(`ALTER TABLE threads ADD COLUMN channel_avatar TEXT`);
+} catch {
+  // column already exists — ignore
+}
+
+try {
+  db.exec(`ALTER TABLE threads ADD COLUMN image_url TEXT`);
+} catch {}
 
   // Migration: update UNIQUE constraint for reactions (if needed)
   // Note: SQLite doesn't support DROP CONSTRAINT directly, so we need to recreate the table
@@ -151,20 +161,95 @@ function getThreadByToken(token) {
   return stmt.get(token);
 }
 
-function createThread({ channelId, mid, token, text, created_at, attachments, image_url }) {
+function normalizeAttachments(rawAttachments) {
+  if (!rawAttachments || !Array.isArray(rawAttachments)) return [];
+  
+  return rawAttachments.map(att => {
+    if (att.type === 'image') {
+      return {
+        type: 'photo',
+        platform: 'max',
+        url: att.payload?.url || att.url || ''
+      };
+    }
+    
+    if (att.type === 'video') {
+      const videoId = att.payload?.id || att.payload?.video_id;
+      return {
+        type: 'video',
+        platform: 'max',
+        video_id: videoId,
+        preview: att.thumbnail?.url || '',
+        duration: att.duration || null
+      };
+    }
+    
+    return null;
+  }).filter(Boolean);
+}
+
+function createThread({
+  channelId,
+  channelTitle,
+  channelAvatar,
+  mid,
+  token,
+  text,
+  attachments,  // ← это уже JSON строка из handleMessageCreated
+  image_url,
+  created_at
+}) {
+  // attachments УЖЕ строка JSON от handleMessageCreated
+  // Проверяем, что это строка и не пустая
+  let attachmentsJson = '[]';
+  
+  if (typeof attachments === 'string' && attachments !== '[]' && attachments.length > 2) {
+    attachmentsJson = attachments;
+  } else if (attachments && typeof attachments === 'object') {
+    // На всякий случай, если вдруг пришел объект
+    attachmentsJson = JSON.stringify(attachments);
+  }
+  
+  console.log('🔥 createThread - saving attachments:', attachmentsJson);
+
   const stmt = db.prepare(`
-    INSERT INTO threads (channel_id, mid, token, text, created_at, attachments, image_url)
-    VALUES (@channelId, @mid, @token, @text, @createdAt, @attachments, @image_url)
+    INSERT INTO threads (
+      channel_id,
+      channel_title,
+      channel_avatar,
+      mid,
+      token,
+      text,
+      created_at,
+      attachments,
+      image_url
+    )
+    VALUES (
+      @channelId,
+      @channelTitle,
+      @channelAvatar,
+      @mid,
+      @token,
+      @text,
+      @createdAt,
+      @attachments,
+      @imageUrl
+    )
   `);
+
   const result = stmt.run({
-    channelId,
+    channelId: String(channelId),
+    channelTitle: channelTitle || null,
+    channelAvatar: channelAvatar || null,
     mid,
     token,
-    text,
-    createdAt: Date.now(),
-    attachments,
-    image_url
+    text: text || '',
+    createdAt: created_at || Date.now(),
+    attachments: attachmentsJson,
+    imageUrl: image_url || null
   });
+
+  console.log('🔥 Thread created, id:', result.lastInsertRowid);
   return result.lastInsertRowid;
 }
 
@@ -315,6 +400,20 @@ function getUserReaction(commentId, userId) {
   return stmt.get(commentId, userId);
 }
 
+function getThreadByToken(token) {
+  const stmt = db.prepare(`
+    SELECT * FROM threads WHERE token = ?
+  `);
+  const thread = stmt.get(token);
+  
+  if (thread && thread.attachments) {
+    // Don't parse here, let handleSession handle it
+    // Just ensure it's not double-parsed
+  }
+  
+  return thread;
+}
+
 module.exports = {
   db,
   migrate,
@@ -331,5 +430,6 @@ module.exports = {
   getCommentById,
   toggleReaction,
   getReactionsByCommentIdWithUser,  
-  getUserReaction
+  getUserReaction,
+  getThreadByToken
 };

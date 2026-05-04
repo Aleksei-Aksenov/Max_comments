@@ -53,14 +53,106 @@ async function buildServer() {
     <title>Комментарии</title>
     <style>
       * { box-sizing: border-box; margin: 0; padding: 0; }
+      
+      /* ── CSS переменные для единой системы цветов ── */
+      :root {
+        --bg-glass: rgba(255, 255, 255, 0.92);
+        --bg-dark-glass: rgba(28, 28, 30, 0.85);
+        --accent: #007aff;
+        --accent-glass: rgba(0, 122, 255, 0.9);
+        --text-primary: #1c1c1e;
+        --text-secondary: #8e8e93;
+        --border-light: rgba(0, 0, 0, 0.05);
+        --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+      }
+
+      /* ── Космический фон как в MAX ── */
       body {
         font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-        background: #f2f2f7;
+        background: linear-gradient(135deg, #a8d4f8 0%, #86c2f5 100%);
         height: 100dvh;
         display: flex;
         flex-direction: column;
         overflow: hidden;
-        -webkit-touch-callout: none;
+        position: relative;
+      }
+
+      /* Звёздный фон */
+      body::before {
+        content: '';
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        pointer-events: none;
+        background-image: 
+          radial-gradient(2px 2px at 20px 30px, #ffffff, rgba(0,0,0,0)),
+          radial-gradient(1px 1px at 60px 70px, #ffffff, rgba(0,0,0,0)),
+          radial-gradient(1px 1px at 100px 150px, #ffffff, rgba(0,0,0,0)),
+          radial-gradient(3px 3px at 200px 250px, #ffffff, rgba(0,0,0,0)),
+          radial-gradient(2px 2px at 350px 100px, #ffffff, rgba(0,0,0,0)),
+          radial-gradient(1px 1px at 500px 400px, #ffffff, rgba(0,0,0,0)),
+          radial-gradient(2px 2px at 650px 200px, #ffffff, rgba(0,0,0,0)),
+          radial-gradient(1px 1px at 800px 500px, #ffffff, rgba(0,0,0,0)),
+          radial-gradient(3px 3px at 950px 300px, #ffffff, rgba(0,0,0,0));
+        background-repeat: no-repeat;
+        background-size: 200px 200px;
+        opacity: 0.6;
+        z-index: 0;
+      }
+
+      /* Дополнительные узоры */
+      body::after {
+        content: '🚀 ✨ 🪐 🌟 ⭐ 📡';
+        position: fixed;
+        bottom: 20px;
+        right: 20px;
+        font-size: 24px;
+        opacity: 0.3;
+        pointer-events: none;
+        white-space: pre;
+        z-index: 0;
+      }
+
+      /* Парящие элементы */
+      .star {
+        position: fixed;
+        color: rgba(255,255,255,0.4);
+        font-size: 14px;
+        pointer-events: none;
+        animation: float 20s infinite linear;
+        z-index: 0;
+      }
+
+      @keyframes float {
+        0% { transform: translateY(100vh) rotate(0deg); opacity: 0; }
+        10% { opacity: 0.5; }
+        90% { opacity: 0.5; }
+        100% { transform: translateY(-20vh) rotate(360deg); opacity: 0; }
+      }
+
+      /* ── Контейнеры ── */
+      #chat, #status-screen {
+        position: relative;
+        z-index: 1;
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+      }
+
+      #status-screen {
+        display: none;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+        padding: 32px 24px;
+        text-align: center;
+        background: var(--bg-glass);
+        backdrop-filter: blur(10px);
+        border-radius: 20px;
+        margin: 12px;
       }
 
       /* ── Loading ── */
@@ -71,300 +163,76 @@ async function buildServer() {
         align-items: center;
         justify-content: center;
         gap: 12px;
-        color: #8e8e93;
+        color: var(--text-secondary);
         font-size: 15px;
       }
+      
       .spinner {
-        width: 28px; height: 28px;
+        width: 28px;
+        height: 28px;
         border: 3px solid #e0e0e0;
-        border-top-color: #007aff;
+        border-top-color: var(--accent);
         border-radius: 50%;
         animation: spin .7s linear infinite;
       }
+      
       @keyframes spin { to { transform: rotate(360deg); } }
 
-      /* ── Status screens ── */
-      #status-screen {
-        flex: 1;
-        display: none;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
-        gap: 10px;
-        padding: 32px 24px;
-        text-align: center;
-      }
-      #status-screen .s-icon { font-size: 52px; }
-      #status-screen .s-title { font-size: 20px; font-weight: 600; color: #1c1c1e; }
-      #status-screen .s-text  { font-size: 15px; color: #8e8e93; line-height: 1.5; }
-
-      /* ── Chat ── */
-      #chat {
-        flex: 1;
-        display: none;
-        flex-direction: column;
-        overflow: hidden;
-        width: 100%;
-        max-width: 100%;
-      }
-
-      #messages {
+      /* ── Контейнер сообщений ── */
+      #messages-container {
         flex: 1;
         overflow-y: auto;
-        padding: 12px 12px 4px;
         display: flex;
         flex-direction: column;
-        gap: 6px;
-        width: 100%;
-      }
-      .no-comments {
-        margin: auto;
-        color: #8e8e93;
-        font-size: 14px;
-        text-align: center;
-        padding: 32px;
-      }
-      .msg {
-        max-width: 85%;
-        padding: 8px 12px;
-        border-radius: 18px;
-        word-break: break-word;
-        background: #fff;
-        align-self: flex-start;
-        box-shadow: 0 1px 1px rgba(0,0,0,.07);
-        position: relative;
+        scroll-behavior: smooth;
+        padding: 12px;
       }
 
-      .msg.own {
-        align-self: flex-end;
-        background: #007aff;
-        color: #fff;
+      /* Скроллбар */
+      #messages-container::-webkit-scrollbar {
+        width: 6px;
       }
-      .msg .author {
-        font-size: 11px;
-        font-weight: 600;
-        color: #007aff;
-        margin-bottom: 3px;
+      #messages-container::-webkit-scrollbar-track {
+        background: rgba(255,255,255,0.3);
+        border-radius: 3px;
       }
-      .msg.own .author { display: none; }
-      .msg .text { font-size: 15px; line-height: 1.4; }
-      .msg .ts {
-        font-size: 10px;
-        color: rgba(0,0,0,.35);
-        text-align: right;
-        margin-top: 3px;
+      #messages-container::-webkit-scrollbar-thumb {
+        background: rgba(0,0,0,0.3);
+        border-radius: 3px;
       }
-      .msg.own .ts { color: rgba(255,255,255,.6); }
 
-      /* ── Reply quote inside message ── */
-      .msg .reply-quote {
-        border-left: 3px solid #007aff;
-        padding: 3px 8px;
-        margin-bottom: 5px;
-        border-radius: 4px;
-        background: rgba(0,122,255,.08);
-      }
-      .msg.own .reply-quote {
-        border-left-color: rgba(255,255,255,.7);
-        background: rgba(255,255,255,.15);
-      }
-      .msg .reply-quote .rq-name {
-        font-size: 11px;
-        font-weight: 600;
-        color: #007aff;
-        margin-bottom: 1px;
-      }
-      .msg.own .reply-quote .rq-name { color: rgba(255,255,255,.9); }
-      .msg-highlight {
-        transition: box-shadow .15s;
-        box-shadow: 0 0 0 3px #007aff88 !important;
-      }
-      .msg .reply-quote { cursor: pointer; }
-      .msg .reply-quote .rq-text {
-        font-size: 12px;
-        color: #555;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        max-width: 220px;
-      }
-      .msg.own .reply-quote .rq-text { color: rgba(255,255,255,.8); }
-
-      /* ── Reply panel above input ── */
-      #reply-bar {
-        display: none;
-        align-items: center;
-        background: #f2f2f7;
-        border-top: 1px solid rgba(0,0,0,.08);
-        padding: 6px 12px 6px 14px;
-        gap: 8px;
-      }
-      #reply-bar .rb-content {
-        flex: 1;
-        min-width: 0;
-      }
-      #reply-bar .rb-name {
-        font-size: 12px;
-        font-weight: 600;
-        color: #007aff;
-      }
-      #reply-bar .rb-text {
-        font-size: 12px;
-        color: #555;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-      }
-      #reply-cancel {
+      /* ── Шапка поста ── */
+      #post-header {
         flex-shrink: 0;
-        width: 22px; height: 22px;
-        border-radius: 50%;
-        border: none;
-        background: #c7c7cc;
-        cursor: pointer;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-size: 14px;
-        color: #fff;
-        line-height: 1;
-  }
-      .reactions {
-        margin-top: 4px;
-      }
-
-      .like-btn {
-        background: transparent;
-        border: none;
-        font-size: 13px;
-        cursor: pointer;
-        color: #8e8e93;
-      }
-
-      .like-btn.liked {
-        color: #007aff;
-        font-weight: 600;
-      }
-
-      .reactions-container {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 6px;
-        margin-top: 6px;
-      }
-
-      .reaction-btn, .reaction-add-btn {
-        background: rgba(0,0,0,0.05);
-        border: none;
+        margin-bottom: 12px;
+        background: var(--bg-glass);
+        backdrop-filter: blur(10px);
         border-radius: 20px;
-        padding: 3px 8px;
-        font-size: 13px;
-        cursor: pointer;
-        transition: all 0.2s;
+        padding: 16px;
+        border: 1px solid var(--border-light);
+        box-shadow: var(--shadow-sm);
       }
 
-      .reaction-btn.active {
-        background: #007aff20;
-        color: #007aff;
-      }
-
-      .reaction-btn:hover, .reaction-add-btn:hover {
-        background: rgba(0,0,0,0.1);
-      }
-
-      .reaction-count {
-        margin-left: 3px;
-        font-size: 11px;
-      }
-
-      .reactions-menu {
-        position: fixed;
-        background: #1c1c1e;
-        border-radius: 30px;
-        padding: 8px 12px;
-        display: flex;
-        gap: 12px;
-        z-index: 10000;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-      }
-
-      .reactions-menu span {
-        font-size: 28px;
-        cursor: pointer;
-        padding: 4px;
-        transition: transform 0.1s;
-      }
-
-      .reactions-menu span:hover {
-        transform: scale(1.2);
-      }
-
-      /* Post header */
-      .post-header {
-        margin: 10px 12px 6px;
-        padding: 12px 14px;
-        background: #ffffff;
-        border-radius: 14px;
-        box-shadow: 0 2px 6px rgba(0,0,0,0.08);
-        font-size: 15px;
-        color: #1c1c1e;
-        line-height: 1.45;
-        flex-shrink: 0;
-        word-break: break-word;
-        position: relative;
-      }
-      .post-header strong {
-        display: block;
-        margin-bottom: 4px;
-        color: #8e8e93;
-        font-weight: 500;
-      }
-      .post-title {
-        font-size: 12px;
-        color: #8e8e93;
-        margin-bottom: 6px;
-        font-weight: 500;
-      }
-      .post-text {
-        font-size: 15px;
-        color: #1c1c1e;
-        max-height: 80px;
-        overflow: hidden;
-        position: relative;
-      }
-
-      .post-text.expanded {
-        max-height: none;
-      }
-      .post-expand {
-        margin-top: 6px;
-        font-size: 13px;
-        color: #007aff;
-        cursor: pointer;
-        user-select: none;
-      }
-      .post-text:not(.expanded)::after {
-        content: "";
-        position: absolute;
-        bottom: 0;
-        left: 0;
-        right: 0;
-        height: 24px;
-        background: linear-gradient(to bottom, rgba(255,255,255,0), #fff);
-      }
       .post-top {
         display: flex;
         align-items: center;
-        margin-bottom: 8px;
+        margin-bottom: 10px;
       }
 
       .post-avatar {
-        width: 34px;
-        height: 34px;
+        width: 40px;
+        height: 40px;
         border-radius: 50%;
         background: #e5e5ea;
-        margin-right: 10px;
+        margin-right: 12px;
         flex-shrink: 0;
+        overflow: hidden;
+      }
+
+      .post-avatar img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
       }
 
       .post-meta {
@@ -373,17 +241,309 @@ async function buildServer() {
       }
 
       .post-channel {
-        font-size: 14px;
+        font-size: 15px;
         font-weight: 600;
-        color: #1c1c1e;
+        color: var(--text-primary);
       }
 
       .post-time {
         font-size: 12px;
-        color: #8e8e93;
+        color: var(--text-secondary);
       }
 
-      /* Модальное окно с затемнением */
+      .post-text {
+        font-size: 15px;
+        line-height: 1.4;
+        color: var(--text-primary);
+        max-height: 80px;
+        overflow: hidden;
+        position: relative;
+      }
+
+      .post-text.expanded {
+        max-height: none;
+      }
+
+      .post-expand {
+        margin-top: 8px;
+        font-size: 13px;
+        color: var(--accent);
+        cursor: pointer;
+        user-select: none;
+      }
+
+      .post-image {
+        margin: 12px -4px;
+        border-radius: 16px;
+        overflow: hidden;
+      }
+
+      .post-image img {
+        width: 100%;
+        max-height: 220px;
+        object-fit: cover;
+        display: block;
+      }
+
+      /* ── Сообщения ── */
+      #messages {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+
+      .no-comments {
+        margin: auto;
+        color: var(--text-secondary);
+        font-size: 14px;
+        text-align: center;
+        padding: 32px;
+      }
+
+      .msg {
+        max-width: 85%;
+        padding: 10px 14px;
+        border-radius: 20px;
+        word-break: break-word;
+        background: var(--bg-glass);
+        backdrop-filter: blur(10px);
+        align-self: flex-start;
+        box-shadow: var(--shadow-sm);
+        border: 1px solid var(--border-light);
+        position: relative;
+      }
+
+      .msg.own {
+        align-self: flex-end;
+        background: var(--accent-glass);
+        color: #fff;
+        border: none;
+        box-shadow: 0 2px 8px rgba(0, 122, 255, 0.3);
+      }
+
+      .msg .author {
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--accent);
+        margin-bottom: 4px;
+      }
+
+      .msg.own .author { display: none; }
+
+      .msg .text {
+        font-size: 15px;
+        line-height: 1.4;
+      }
+
+      .msg .ts {
+        font-size: 10px;
+        color: rgba(0,0,0,0.35);
+        text-align: right;
+        margin-top: 4px;
+      }
+
+      .msg.own .ts {
+        color: rgba(255,255,255,0.6);
+      }
+
+      /* ── Reply quote ── */
+      .msg .reply-quote {
+        border-left: 3px solid var(--accent);
+        padding: 4px 10px;
+        margin-bottom: 6px;
+        border-radius: 10px;
+        background: rgba(0, 122, 255, 0.08);
+      }
+
+      .msg.own .reply-quote {
+        border-left-color: rgba(255,255,255,0.7);
+        background: rgba(255,255,255,0.15);
+      }
+
+      .msg .reply-quote .rq-name {
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--accent);
+        margin-bottom: 2px;
+      }
+
+      .msg.own .reply-quote .rq-name {
+        color: rgba(255,255,255,0.9);
+      }
+
+      .msg .reply-quote .rq-text {
+        font-size: 12px;
+        color: #555;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        max-width: 220px;
+      }
+
+      .msg.own .reply-quote .rq-text {
+        color: rgba(255,255,255,0.8);
+      }
+
+      .msg-highlight {
+        transition: box-shadow .15s;
+        box-shadow: 0 0 0 3px var(--accent) !important;
+      }
+
+      /* ── Reply panel ── */
+      #reply-bar {
+        display: none;
+        align-items: center;
+        background: var(--bg-glass);
+        backdrop-filter: blur(10px);
+        border-top: 0.5px solid var(--border-light);
+        padding: 8px 12px;
+        gap: 10px;
+      }
+
+      #reply-bar .rb-content {
+        flex: 1;
+      }
+
+      #reply-bar .rb-name {
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--accent);
+      }
+
+      #reply-bar .rb-text {
+        font-size: 12px;
+        color: var(--text-secondary);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      #reply-cancel {
+        width: 24px;
+        height: 24px;
+        border-radius: 50%;
+        border: none;
+        background: #c7c7cc;
+        cursor: pointer;
+        font-size: 14px;
+        color: #fff;
+      }
+
+      /* ── Input area ── */
+      #input-bar {
+        background: var(--bg-glass);
+        backdrop-filter: blur(10px);
+        border-top: 0.5px solid var(--border-light);
+        padding: 8px 12px;
+        padding-bottom: max(8px, env(safe-area-inset-bottom));
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+
+      .input-wrapper {
+        flex: 1;
+        position: relative;
+        display: flex;
+        align-items: center;
+      }
+
+      #msg-input {
+        flex: 1;
+        border: 0.5px solid var(--border-light);
+        border-radius: 22px;
+        padding: 10px 48px 10px 16px;
+        font-size: 15px;
+        font-family: inherit;
+        outline: none;
+        resize: none;
+        line-height: 1.4;
+        min-height: 40px;
+        max-height: 120px;
+        overflow-y: auto;
+        background: rgba(242, 242, 247, 0.9);
+      }
+
+      #msg-input:focus {
+        border-color: var(--accent);
+        background: #fff;
+      }
+
+      #send-btn {
+        position: absolute;
+        right: 6px;
+        top: 50%;
+        transform: translateY(-50%);
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        border: none;
+        background: var(--accent);
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      #send-btn:disabled {
+        opacity: 0.4;
+        cursor: default;
+      }
+
+      #send-btn svg {
+        width: 16px;
+        height: 16px;
+        fill: #fff;
+      }
+
+      .emoji-btn {
+        flex-shrink: 0;
+        width: 40px;
+        height: 40px;
+        border-radius: 50%;
+        border: none;
+        background: rgba(242, 242, 247, 0.9);
+        cursor: pointer;
+        font-size: 22px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: background 0.2s;
+      }
+
+      .emoji-btn:hover {
+        background: #e5e5ea;
+      }
+
+      /* ── Реакции ── */
+      .reactions-container {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-top: 6px;
+      }
+
+      .reaction-btn {
+        background: rgba(0,0,0,0.05);
+        border: none;
+        border-radius: 20px;
+        padding: 4px 10px;
+        font-size: 14px;
+        cursor: pointer;
+        transition: all 0.2s;
+      }
+
+      .reaction-btn.active {
+        background: rgba(0, 122, 255, 0.2);
+        color: var(--accent);
+      }
+
+      .reaction-count {
+        margin-left: 4px;
+        font-size: 12px;
+      }
+
+      /* ── Модальное окно реакций ── */
       .modal-overlay {
         position: fixed;
         top: 0;
@@ -403,7 +563,6 @@ async function buildServer() {
         background: #2c2c2e;
         border-radius: 14px;
         overflow: hidden;
-        box-shadow: 0 8px 20px rgba(0,0,0,0.3);
         min-width: 260px;
         max-width: 90vw;
         z-index: 100000;
@@ -414,7 +573,6 @@ async function buildServer() {
         gap: 12px;
         padding: 12px 16px;
         border-bottom: 0.5px solid rgba(255,255,255,0.1);
-        background: #2c2c2e;
         flex-wrap: wrap;
         justify-content: center;
       }
@@ -425,17 +583,11 @@ async function buildServer() {
         font-size: 32px;
         cursor: pointer;
         padding: 6px 10px;
-        transition: transform 0.1s;
-      }
-
-      .modal-reaction-btn:active {
-        transform: scale(1.2);
       }
 
       .modal-actions {
         display: flex;
         flex-direction: column;
-        background: #1c1c1e;
       }
 
       .modal-action-btn {
@@ -446,27 +598,9 @@ async function buildServer() {
         font-size: 16px;
         color: #ffffff;
         cursor: pointer;
-        transition: background 0.1s;
       }
 
-      .modal-action-btn:active {
-        background: rgba(255,255,255,0.1);
-      }
-
-      .post-image {
-        margin-top: 10px;
-        border-radius: 12px;
-        overflow: hidden;
-      }
-
-      .post-image img {
-        width: 100%;
-        max-height: 220px;
-        object-fit: cover;
-        display: block;
-      }      
-
-      /* Toast уведомления */
+      /* ── Toast ── */
       .toast {
         position: fixed;
         bottom: 100px;
@@ -478,34 +612,11 @@ async function buildServer() {
         border-radius: 25px;
         font-size: 14px;
         z-index: 10002;
-        white-space: nowrap;
-        max-width: 90vw;
-        white-space: normal;
         text-align: center;
         pointer-events: none;
       }
 
-      /* Кнопка смайлика */
-      .emoji-btn {
-        flex-shrink: 0;
-        width: 40px;
-        height: 40px;
-        border-radius: 50%;
-        border: none;
-        background: #f2f2f7;
-        cursor: pointer;
-        font-size: 22px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        transition: background 0.2s;
-      }
-
-      .emoji-btn:hover {
-        background: #e5e5ea;
-      }
-
-      /* Панель выбора эмодзи */
+      /* ── Emoji picker ── */
       .emoji-picker {
         position: fixed;
         background: #1c1c1e;
@@ -525,53 +636,35 @@ async function buildServer() {
         font-size: 28px;
         cursor: pointer;
         padding: 6px;
-        transition: transform 0.1s;
       }
 
-      .emoji-picker-btn:hover {
-        transform: scale(1.2);
-      }
-
-      /* Реакции под комментарием */
-      .reactions-container {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 6px;
-        margin-top: 6px;
-      }
-
-      .reaction-btn {
-        background: rgba(0,0,0,0.05);
-        border: none;
-        border-radius: 20px;
-        padding: 4px 10px;
-        font-size: 14px;
-        cursor: pointer;
-        transition: all 0.2s;
-      }
-
-      .reaction-btn.active {
-        background: #007aff20;
-        color: #007aff;
-      }
-
-      .reaction-count {
-        margin-left: 4px;
-        font-size: 12px;
-      }
-
-      /* Мобильная адаптация */
+      /* ── Мобильная адаптация ── */
       @media (max-width: 768px) {
-
-        .msg {
-          max-width: 90%;
-          -webkit-user-select: none;
-          user-select: none;
+        #post-header {
+          margin: 8px;
+          padding: 12px;
         }
-
-        .msg .text {
-          -webkit-user-select: text;
-          user-select: text;
+        
+        #messages-container {
+          padding: 8px;
+        }
+        
+        .msg {
+          -webkit-touch-callout: none;  /* Отключает меню "Копировать/Выделить" на iOS */
+          -webkit-user-select: none;    /* Отключает выделение на iOS/Android */
+          user-select: none;            /* Отключает выделение на Android */        
+          max-width: 90%;
+        }
+        
+        .post-avatar {
+          width: 36px;
+          height: 36px;
+        }
+        
+        .emoji-btn {
+          width: 36px;
+          height: 36px;
+          font-size: 20px;
         }
         
         .reactions-modal {
@@ -582,180 +675,6 @@ async function buildServer() {
           font-size: 28px;
           padding: 4px 8px;
         }
-        
-        .modal-action-btn {
-          padding: 12px 16px;
-          font-size: 15px;
-        }
-        
-        .emoji-picker {
-          padding: 8px 12px;
-          gap: 8px;
-        }
-        
-        .emoji-picker-btn {
-          font-size: 24px;
-        }
-      }
-      
-      /* Улучшенный скролл */
-      #messages::-webkit-scrollbar {
-        width: 6px;
-      }
-
-      #messages::-webkit-scrollbar-track {
-        background: #f1f1f1;
-        border-radius: 3px;
-      }
-
-      #messages::-webkit-scrollbar-thumb {
-        background: #c1c1c1;
-        border-radius: 3px;
-      }
-
-      #messages::-webkit-scrollbar-thumb:hover {
-        background: #a8a8a8;
-      }
-
-      /* ── Input area ── */
-      #input-bar {
-        background: #fff;
-        border-top: 1px solid rgba(0,0,0,.1);
-        padding: 8px 12px;
-        padding-bottom: max(8px, env(safe-area-inset-bottom));
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        width: 100%;
-      }
-
-      .input-wrapper {
-        flex: 1;
-        position: relative;
-        display: flex;
-        align-items: center;
-      }
-
-      #msg-input {
-        flex: 1;
-        border: 1px solid #d1d1d6;
-        border-radius: 20px;
-        padding: 10px 48px 10px 14px;
-        font-size: 15px;
-        font-family: inherit;
-        outline: none;
-        resize: none;
-        line-height: 1.4;
-        min-height: 40px;
-        max-height: 120px;
-        overflow-y: auto;
-        background: #f2f2f7;
-        width: 100%;
-      }
-
-      #msg-input:focus { 
-        border-color: #007aff; 
-        background: #fff; 
-      }
-
-
-      #send-btn:disabled { 
-        opacity: .4; 
-        cursor: default; 
-      }
-
-      #send-btn svg { 
-        width: 16px; 
-        height: 16px; 
-        fill: #fff; 
-      }
-
-      .emoji-btn {
-        flex-shrink: 0;
-        width: 40px;
-        height: 40px;
-        border-radius: 50%;
-        border: none;
-        background: #f2f2f7;
-        cursor: pointer;
-        font-size: 22px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        transition: background 0.2s;
-      }
-
-      /* Кнопка смайлика */
-      .emoji-btn {
-        flex-shrink: 0;
-        width: 40px;
-        height: 40px;
-        border-radius: 50%;
-        border: none;
-        background: #f2f2f7;
-        cursor: pointer;
-        font-size: 22px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        transition: background 0.2s;
-      }
-
-      .emoji-btn:hover {
-        background: #e5e5ea;
-      }
-
-      #msg-input {
-        flex: 1;
-        border: 1px solid #d1d1d6;
-        border-radius: 20px;
-        padding: 10px 14px;
-        font-size: 15px;
-        font-family: inherit;
-        outline: none;
-        resize: none;
-        line-height: 1.4;
-        min-height: 40px;
-        max-height: 120px;
-        overflow-y: auto;
-        background: #f2f2f7;
-        width: 100%;
-      }
-      #msg-input:focus { 
-        border-color: #007aff; 
-        background: #fff; 
-      }
-
-      #send-btn {
-        flex-shrink: 0;
-        width: 40px;
-        height: 40px;
-        border-radius: 50%;
-        border: none;
-        background: #007aff;
-        cursor: pointer;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        transition: opacity .15s;
-      }
-
-      #send-btn:disabled { 
-        opacity: .4; 
-        cursor: default; 
-      }
-
-      #send-btn svg { 
-        width: 18px; 
-        height: 18px; 
-        fill: #fff; 
-      }
-
-      .reaction {
-        position: fixed;
-        font-size: 24px;
-        pointer-events: none;
-        transition: transform 0.7s ease-out, opacity 0.7s ease-out;
       }
     </style>
   </head>
@@ -772,9 +691,12 @@ async function buildServer() {
     </div>
 
     <div id="chat">
-      <div id="messages">
-        <div class="no-comments" id="no-comments">Комментариев пока нет.<br>Будьте первым!</div>
-      </div>
+        <div id="messages-container">
+          <div id="post-header" class="post-header" style="display: none;"></div>
+          <div id="messages">
+            <div class="no-comments" id="no-comments">Комментариев пока нет.<br>Будьте первым!</div>
+          </div>
+        </div>
       <div id="reply-bar">
         <div class="rb-content">
           <div class="rb-name" id="rb-name"></div>
@@ -858,65 +780,6 @@ async function buildServer() {
         if (st) st.textContent = title;
         if (sx) sx.textContent = text;
       }
-      function showChat(session) {
-        const loading = document.getElementById('loading');
-        const sc      = document.getElementById('status-screen');
-        const chat    = document.getElementById('chat');
-        if (!chat) return;
-        
-        // Удаляем существующий header
-        const existingHeader = document.querySelector('.post-header');
-        if (existingHeader) existingHeader.remove();
-
-        if (session?.thread) {
-          const header = document.createElement('div');
-          header.className = 'post-header';
-
-          const text = session.thread.text || '';
-          const image = session.thread.image_url || '';
-
-          header.innerHTML =
-            '<div class="post-top">' +
-              '<div class="post-avatar"></div>' +
-              '<div class="post-meta">' +
-                '<div class="post-channel">Канал</div>' +
-                '<div class="post-time">' + fmt(Date.now()) + '</div>' +
-              '</div>' +
-            '</div>' +
-
-            // 🖼 КАРТИНКА
-            (image ? 
-              '<div class="post-image">' +
-                '<img src="' + image + '" />' +
-              '</div>'
-            : '') +
-
-            // 📝 ТЕКСТ
-            (text ? 
-              '<div class="post-text" id="post-text">' + esc(text) + '</div>' +
-              '<div class="post-expand" id="post-expand" style="display:none;">Показать ещё</div>'
-            : '');
-
-          // expand логика
-          const postTextEl = header.querySelector('#post-text');
-          const expandBtn = header.querySelector('#post-expand');
-
-          if (postTextEl && expandBtn && postTextEl.scrollHeight > 80) {
-            expandBtn.style.display = 'block';
-
-            expandBtn.addEventListener('click', () => {
-              const expanded = postTextEl.classList.toggle('expanded');
-              expandBtn.textContent = expanded ? 'Скрыть' : 'Показать ещё';
-            });
-          }
-
-          document.body.prepend(header);
-        }
-        
-        if (loading) loading.style.display = 'none';
-        if (sc)      sc.style.display      = 'none';
-        chat.style.display = 'flex';
-      }
 
       function showToast(message) {
         const toast = document.createElement('div');
@@ -924,7 +787,129 @@ async function buildServer() {
         toast.textContent = message;
         document.body.appendChild(toast);
         setTimeout(() => toast.remove(), 2000);
+      }        
+        
+      // ✅ ФУНКЦИЯ ДЛЯ ОТКРЫТИЯ ПОСТА В MAX
+      function openOriginalPost(postUrl) {
+        if (postUrl) {
+          window.open(postUrl, '_blank');
+        } else {
+          showToast('Ссылка на пост недоступна');
+        }
       }
+
+    // ── Космические звёзды ──────────────────────────────────────────────
+    function createStars() {
+      // Удаляем старые звёзды
+      document.querySelectorAll('.star').forEach(function(el) { el.remove(); });
+      
+      const icons = ['⭐', '🌟', '✨', '🚀', '🪐', '🌙', '☄️', '💫'];
+      
+      for (let i = 0; i < 30; i++) {
+        const star = document.createElement('div');
+        star.className = 'star';
+        star.textContent = icons[Math.floor(Math.random() * icons.length)];
+        star.style.left = Math.random() * 100 + '%';
+        star.style.fontSize = (Math.random() * 16 + 10) + 'px';
+        star.style.animationDuration = (Math.random() * 15 + 10) + 's';
+        star.style.animationDelay = Math.random() * 15 + 's';
+        star.style.opacity = Math.random() * 0.5 + 0.2;
+        document.body.appendChild(star);
+      }
+    }
+
+      // ✅ ОБНОВЛЕННАЯ ФУНКЦИЯ showChat
+      function showChat(session) {
+        const loading = document.getElementById('loading');
+        const sc = document.getElementById('status-screen');
+        const chat = document.getElementById('chat');
+        const messagesContainer = document.getElementById('messages-container');
+        if (!chat) return;
+        
+        // Удаляем существующий header из messages-container
+        const existingHeader = document.getElementById('post-header');
+        if (existingHeader) {
+          existingHeader.remove();
+        }
+
+        if (session?.thread) {
+          const header = document.createElement('div');
+          header.id = 'post-header';
+          header.className = 'post-header';
+
+          const text = session.thread.text || '';
+          const attachments = session.thread.attachments || [];
+          const channelName = session.channel?.title || 'Канал';
+          const channelAvatar = session.channel?.avatar || '';
+
+          // Только фото, видео игнорируем
+          let mediaHtml = '';
+          attachments.forEach(function(att) {
+            if (att.type === 'photo') {
+              mediaHtml += '<div class="post-image"><img src="' + att.url + '" loading="lazy" /></div>';
+            }
+          });
+
+          header.innerHTML =
+            '<div class="post-top">' +
+              '<div class="post-avatar">' +
+                (channelAvatar ? '<img src="' + channelAvatar + '" />' : '') +
+              '</div>' +
+              '<div class="post-meta">' +
+                '<div class="post-channel">' + esc(channelName) + '</div>' +
+                '<div class="post-time">' + fmt(Date.now()) + '</div>' +
+              '</div>' +
+            '</div>' +
+            mediaHtml +
+            (text ? 
+              '<div class="post-text-wrapper">' +
+                '<div class="post-text" id="post-text">' + esc(text) + '</div>' +
+                '<div class="post-expand" id="post-expand" style="display:none;">Показать ещё</div>' +
+              '</div>'
+            : '');
+
+          // Вставляем header в начало messages-container
+          const messagesContainerElem = document.getElementById('messages-container');
+          messagesContainerElem.insertBefore(header, messagesContainerElem.firstChild);
+
+          // Логика expand
+          const postTextEl = header.querySelector('#post-text');
+          const expandBtn = header.querySelector('#post-expand');
+
+          if (postTextEl && expandBtn) {
+            setTimeout(function() {
+              const lineHeight = parseInt(getComputedStyle(postTextEl).lineHeight) || 20;
+              const maxHeight = lineHeight * 3.5;
+              
+              if (postTextEl.scrollHeight > maxHeight) {
+                expandBtn.style.display = 'block';
+                postTextEl.style.maxHeight = maxHeight + 'px';
+                postTextEl.style.overflow = 'hidden';
+
+                expandBtn.addEventListener('click', function() {
+                  const expanded = postTextEl.style.maxHeight !== 'none';
+                  if (expanded) {
+                    postTextEl.style.maxHeight = 'none';
+                    expandBtn.textContent = 'Скрыть';
+                  } else {
+                    postTextEl.style.maxHeight = maxHeight + 'px';
+                    expandBtn.textContent = 'Показать ещё';
+                  }
+                });
+              }
+            }, 100);
+          }
+        }
+        
+        if (loading) loading.style.display = 'none';
+        if (sc) sc.style.display = 'none';
+        chat.style.display = 'flex';
+          // ✅ ВЫЗЫВАЕМ СОЗДАНИЕ ЗВЁЗД ПОСЛЕ ОТОБРАЖЕНИЯ ЧАТА
+        createStars();
+      }
+
+
+
 
       // ── initData & startParam ────────────────────────────────
       const qs         = new URLSearchParams(window.location.search);
@@ -941,6 +926,20 @@ async function buildServer() {
                           || '';
 
       // ── session ──────────────────────────────────────────────
+      
+      async function init() {
+        const startParam = new URLSearchParams(window.location.search).get('WebAppStartParam');
+        const token = startParam?.replace('t_', '');
+
+        const res = await fetch('/api/thread/' + token);
+        const data = await res.json();
+
+        console.log('THREAD DATA:', data);
+
+        renderChannel(data.channel);
+        renderPost(data.post);
+      }      
+      
       async function fetchSession() {
         const getUrl = '/api/session?initData=' + encodeURIComponent(initData)
           + '&startParam=' + encodeURIComponent(startParam);
@@ -991,7 +990,16 @@ async function buildServer() {
         
         const reactionsRow = document.createElement('div');
         reactionsRow.className = 'modal-reactions';
-        const emojis = ['👍', '❤️', '😂', '🔥', '😢', '😮'];
+        const emojis = [
+          '👍', '👎',     // thumbs up/down
+          '❤️', '💔',     // love/broken heart
+          '😂', '😢',     // laugh/cry
+          '😮', '😡',     // shock/anger
+          '🔥', '💩',     // fire/poop
+          '🎉', '💀',     // party/skull
+          '👏', '🙏',     // clap/pray
+          '🤔', '😎'      // thinking/cool
+        ];
         emojis.forEach(emoji => {
           const btn = document.createElement('button');
           btn.className = 'modal-reaction-btn';
@@ -1043,46 +1051,26 @@ async function buildServer() {
         overlay.appendChild(modal);
         document.body.appendChild(overlay);
         
-        // Получаем позицию элемента и размеры окна
-        const rect = element.getBoundingClientRect();
-        const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
-        const scrollLeft = window.pageXOffset || document.documentElement.scrollLeft;
-        
         // Ждем рендеринга модалки для получения ее размеров
         setTimeout(() => {
           const modalRect = modal.getBoundingClientRect();
           const modalHeight = modalRect.height;
           const modalWidth = modalRect.width;
           
-          let top, left;
+          // Центрирование по экрану
+          let left = (window.innerWidth - modalWidth) / 2;
+          let top = (window.innerHeight - modalHeight) / 2 + window.scrollY;
           
-          if (clientX && clientY) {
-            // ПК: позиционируем относительно курсора
-            left = clientX - modalWidth / 2;
-            top = clientY - modalHeight - 10;
-          } else {
-            // Мобильные: под комментарием
-            left = rect.left + (rect.width - modalWidth) / 2;
-            top = rect.bottom + scrollTop + 10;
-          }
-          
-          // Проверяем выход за левый край
+          // Проверяем выход за границы
           if (left < 10) left = 10;
-          // Проверяем выход за правый край
           if (left + modalWidth > window.innerWidth - 10) {
             left = window.innerWidth - modalWidth - 10;
           }
-          // Если не помещается снизу, показываем сверху
-          if (top + modalHeight > window.innerHeight + scrollTop - 50) {
-            if (clientX && clientY) {
-              top = clientY + 10;
-            } else {
-              top = rect.top + scrollTop - modalHeight - 10;
-            }
+          if (top < 10 + window.scrollY) {
+            top = 10 + window.scrollY;
           }
-          // Проверяем выход за верхний край
-          if (top < scrollTop + 10) {
-            top = scrollTop + 10;
+          if (top + modalHeight > window.innerHeight + window.scrollY - 10) {
+            top = window.innerHeight + window.scrollY - modalHeight - 10;
           }
           
           modal.style.left = left + 'px';
@@ -1435,7 +1423,18 @@ async function buildServer() {
           const picker = document.createElement('div');
           picker.className = 'emoji-picker';
           
-          const emojis = ['👍', '❤️', '😂', '🔥', '😢', '😮', '🎉', '👏', '💯', '🙏'];
+          const emojis = [
+            '👍', '👎',      // thumbs
+            '❤️', '💔',      // heart
+            '😂', '😢',      // laugh/cry
+            '😮', '😡',      // shock/anger
+            '🔥', '💩',      // fire/poop
+            '🎉', '💀',      // party/skull
+            '👏', '🙏',      // clap/pray
+            '🤔', '😎',      // thinking/cool
+            '🥰', '😤',      // love/annoyed
+            '👎', '💯'       // thumbs down/100
+          ];
           emojis.forEach(emoji => {
             const btn = document.createElement('button');
             btn.className = 'emoji-picker-btn';
@@ -1467,7 +1466,17 @@ async function buildServer() {
           }, 0);
         });
       }
-
+      // ── Глобальные обработчики ─────────────────────────────────
+      document.addEventListener('click', function(e) {
+        const card = e.target.closest('.video-card');
+        if (card) {
+          const postUrl = card.getAttribute('data-post-url');
+          if (postUrl && postUrl !== 'undefined') {
+            window.open(postUrl, '_blank');
+            e.stopPropagation();
+          }
+        }
+      });
       // ── main ─────────────────────────────────────────────────
       (async () => {
         if (webApp?.ready) webApp.ready();
@@ -1640,17 +1649,43 @@ async function buildServer() {
     });
     request.log.info({ subscribed, channelId: thread.channel_id, userId: String(user.user_id) }, 'Session subscribed');
 
+    // ✅ Безопасный парсинг attachments
+    let attachments = [];
+    try {
+      if (typeof thread.attachments === 'string') {
+        attachments = JSON.parse(thread.attachments || '[]');
+      } else if (Array.isArray(thread.attachments)) {
+        attachments = thread.attachments;
+      }
+    } catch (e) {
+      console.error('Failed to parse attachments:', e);
+      attachments = [];
+    }
+
+    // ✅ Формируем ссылку на оригинальный пост в канале
+    const postUrl = `https://max.ru/channels/${thread.channel_id}/messages/${thread.mid}`;
+
     return reply.send({
       ok: true,
       subscribed,
+      
+      // Добавляем информацию о канале
+      channel: {
+        id: thread.channel_id,
+        title: thread.channel_title || 'Канал',
+        avatar: thread.channel_avatar || ''
+      },
+      
       thread: {
         channel_id: thread.channel_id,
         mid: thread.mid,
         text: thread.text || '',
         created_at: thread.created_at,
-        attachments: thread.attachments ? JSON.parse(thread.attachments) : [],
-        image_url: thread.image_url || ''
+        attachments: attachments,  // ✅ Теперь attachments это массив объектов с video_id
+        image_url: thread.image_url || '',
+        post_url: postUrl  // ✅ Ссылка на пост в канале
       },
+      
       user: {
         user_id: user.user_id,
         name: user.name,
@@ -1690,6 +1725,27 @@ async function buildServer() {
 
     return reply.send({ ok: true, comments: enriched });
   });
+
+  app.get("/api/thread/:mid", (req, reply) => {
+  const thread = db.prepare(`
+    SELECT * FROM threads WHERE mid = ?
+  `).get(req.params.mid);
+
+  if (!thread) {
+    return reply.code(404).send({ error: "Not found" });
+  }
+
+  reply.send({
+    channel: {
+      title: thread.channel_title,
+      avatar: thread.channel_avatar
+    },
+    post: {
+      text: thread.text,
+      attachments: JSON.parse(thread.attachments || "[]")
+    }
+  });
+});
 
   app.post('/api/threads/:channelId/:mid/comments', async (request, reply) => {
     const initData = request.body?.initData || request.headers['x-init-data'];
