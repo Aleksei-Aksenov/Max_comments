@@ -3,16 +3,22 @@
   "version": "1.0.0",
   "description": "Comments for MAX channels via mini-app",
   "main": "src/server.js",
-  "directories": {
-    "doc": "docs"
-  },
   "scripts": {
-    "start": "node src/server.js",
+    "start": "NODE_ENV=production node src/server.js",
     "dev": "node src/server.js",
-    "bot:listen": "node src/bot_listen.js",
-    "bot:worker": "node src/bot_worker.js"
+    "bot:worker": "node src/bot_worker.js",
+    "docker:build": "docker build -t max_comments .",
+    "docker:up": "docker-compose up -d",
+    "docker:down": "docker-compose down",
+    "docker:logs": "docker-compose logs -f"
   },
-  "keywords": [],
+  "keywords": [
+    "max",
+    "comments",
+    "miniapp",
+    "chat",
+    "reactions"
+  ],
   "author": "",
   "license": "ISC",
   "dependencies": {

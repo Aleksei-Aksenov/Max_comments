@@ -5,3 +5,14 @@ node_modules
 *.sqlite-wal
 docs
 .git
+.gitignore
+Dockerfile
+docker-compose*.yml
+README.md
+*.md
+.git
+.github
+.vscode
+.idea
+logs
+npm-debug.log

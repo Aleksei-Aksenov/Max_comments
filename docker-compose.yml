@@ -29,6 +29,8 @@ services:
     env_file: .env
     environment:
       DB_PATH: /data/data.sqlite
+      WEBHOOK_SECRET: ${WEBHOOK_SECRET}
+      NODE_ENV: production
     volumes:
       - sqlite_data:/data
     networks:
@@ -50,6 +52,9 @@ services:
     env_file: .env
     environment:
       DB_PATH: /data/data.sqlite
+      NODE_ENV: production
+      WEBHOOK_URL: https://${DOMAIN}/api/webhook
+      WEBHOOK_SECRET: ${WEBHOOK_SECRET}
     volumes:
       - sqlite_data:/data
     networks:
@@ -63,3 +68,4 @@ volumes:
 
 networks:
   max_comments_net:
+    driver: bridge

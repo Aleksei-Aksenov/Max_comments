@@ -1,12 +1,9 @@
 require('dotenv').config();
-const { Bot } = require('@maxhub/max-bot-api');
 const { config, validateConfig } = require('./config');
 const { migrate } = require('./db');
-const {
-  handleMessageCreated,
-  handleUserAdded,
-  handleUserRemoved,
-} = require('./webhook_handlers');
+
+validateConfig();
+migrate();
 
 const token = process.env.MAX_BOT_TOKEN || process.env.BOT_TOKEN;
 if (!token) {
@@ -14,42 +11,45 @@ if (!token) {
   process.exit(1);
 }
 
-validateConfig();
-migrate();
+const WEBHOOK_URL = process.env.WEBHOOK_URL || `https://${config.domain}/api/webhook`;
+const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || crypto.randomBytes(32).toString('base64url');
 
-const bot = new Bot(token);
-
-bot.on('message_created', async (ctx) => {
+async function setupWebhook() {
   try {
-    const msg = ctx.message;
-    console.log('message_created', {
-      chat_id: msg?.recipient?.chat_id,
-      chat_type: msg?.recipient?.chat_type,
-      mid: msg?.body?.mid,
-      text: msg?.body?.text,
+    // Правильный URL для подписки на webhook
+    const subscriptionUrl = `${config.maxApiBase}/subscriptions`;
+    console.log(`🔗 Setting webhook to: ${subscriptionUrl}`);
+    
+    const response = await fetch(subscriptionUrl, {
+      method: 'POST',
+      headers: { 
+        'Authorization': token,  // ← токен без Bearer, просто строка
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        url: WEBHOOK_URL,
+        update_types: ['message_created', 'user_added', 'user_removed', 'bot_started'],
+        secret: WEBHOOK_SECRET
+      })
     });
-    const result = await handleMessageCreated(ctx.update);
-    console.log('message_created result', result);
+    
+    const result = await response.json();
+    console.log('✅ Webhook setup result:', result);
+    
+    if (result.success) {
+      console.log(`📡 Webhook active: ${WEBHOOK_URL}`);
+      console.log(`🔐 Webhook secret: ${WEBHOOK_SECRET}`);
+    }
   } catch (error) {
-    console.error('message_created handler error', error);
+    console.error('❌ Failed to setup webhook:', error);
   }
-});
+}
 
-bot.on('user_added', (ctx) => {
-  try {
-    handleUserAdded(ctx.update);
-  } catch (error) {
-    console.error('user_added handler error', error);
-  }
-});
+setupWebhook();
 
-bot.on('user_removed', (ctx) => {
-  try {
-    handleUserRemoved(ctx.update);
-  } catch (error) {
-    console.error('user_removed handler error', error);
-  }
-});
+// Держим процесс живым
+console.log('🚀 Bot worker started (webhook mode)');
+console.log(`📡 Webhook URL: ${WEBHOOK_URL}`);
+console.log('💡 Events will be sent to this URL');
 
-bot.start();
-console.log('Bot worker (long-polling) started');
+setInterval(() => {}, 60000);

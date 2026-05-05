@@ -22,6 +22,10 @@ function migrate() {
       token TEXT NOT NULL UNIQUE,
       created_at INTEGER NOT NULL,
       text TEXT,
+      channel_title TEXT,
+      channel_avatar TEXT,
+      attachments TEXT,
+      image_url TEXT,
       UNIQUE(channel_id, mid)
     );
 
@@ -31,6 +35,7 @@ function migrate() {
       user_id TEXT NOT NULL,
       text TEXT NOT NULL,
       created_at INTEGER NOT NULL,
+      reply_to_id INTEGER REFERENCES comments(id),
       FOREIGN KEY(thread_id) REFERENCES threads(id)
     );
 
@@ -39,84 +44,50 @@ function migrate() {
       comment_id INTEGER NOT NULL,
       user_id TEXT NOT NULL,
       emoji TEXT DEFAULT '👍',
-      UNIQUE(comment_id, user_id)
+      created_at INTEGER DEFAULT 0,
+      UNIQUE(comment_id, user_id, emoji)
     );
   `);
 
-  // Migration: add reply_to_id if not exists
+  // Индексы для производительности
+  try {
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_reactions_comment ON reactions(comment_id)`);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_comments_thread ON comments(thread_id)`);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_threads_channel ON threads(channel_id, mid)`);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_reactions_unique ON reactions(comment_id, user_id, emoji)`);
+  } catch (error) {
+    console.log('Index creation note:', error.message);
+  }
+
+  // Миграции для старых баз (безопасные ALTER TABLE)
   try {
     db.exec(`ALTER TABLE comments ADD COLUMN reply_to_id INTEGER REFERENCES comments(id)`);
-  } catch {
-    // column already exists — ignore
-  }
-
-  // Migration: add emoji column to reactions if not exists
+  } catch {}
+  
   try {
-    db.exec(`ALTER TABLE reactions ADD COLUMN emoji TEXT DEFAULT '👍'`);
-  } catch {
-    // column already exists — ignore
-  }
-
-  // Migration: add text to threads if not exists
-try {
-  db.exec(`ALTER TABLE threads ADD COLUMN text TEXT`);
-} catch {
-  // column already exists — ignore
-}
-
-  // Migration: add attachments to threads if not exists
-try {
-  db.exec(`ALTER TABLE threads ADD COLUMN attachments TEXT`);
-} catch {
-  // column already exists — ignore
-}
-  // Migration: add channel_title to threads if not exists
-try {
-  db.exec(`ALTER TABLE threads ADD COLUMN channel_title TEXT`);
-} catch {
-  // column already exists — ignore
-}
-  // Migration: add channel_avatar to threads if not exists
-try {
-  db.exec(`ALTER TABLE threads ADD COLUMN channel_avatar TEXT`);
-} catch {
-  // column already exists — ignore
-}
-
-try {
-  db.exec(`ALTER TABLE threads ADD COLUMN image_url TEXT`);
-} catch {}
-
-  // Migration: update UNIQUE constraint for reactions (if needed)
-  // Note: SQLite doesn't support DROP CONSTRAINT directly, so we need to recreate the table
-  // This is a simplified approach - for existing databases you might need a more complex migration
+    db.exec(`ALTER TABLE threads ADD COLUMN text TEXT`);
+  } catch {}
+  
   try {
-    // Check if old UNIQUE constraint exists (without emoji)
-    const tableInfo = db.prepare(`PRAGMA table_info(reactions)`).all();
-    const hasOldConstraint = tableInfo.some(col => col.name === 'comment_id');
-    
-    if (hasOldConstraint) {
-      // Recreate reactions table with new UNIQUE constraint
-      db.exec(`
-        CREATE TABLE reactions_new (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          comment_id INTEGER NOT NULL,
-          user_id TEXT NOT NULL,
-          emoji TEXT DEFAULT '👍',
-          UNIQUE(comment_id, user_id)
-        );
-        
-        INSERT INTO reactions_new (id, comment_id, user_id, emoji)
-        SELECT id, comment_id, user_id, '👍' FROM reactions;
-        
-        DROP TABLE reactions;
-        ALTER TABLE reactions_new RENAME TO reactions;
-      `);
-    }
-  } catch (error) {
-    // Table might not exist yet or already has correct schema
-    console.log('Migration note:', error.message);
-  }
+    db.exec(`ALTER TABLE threads ADD COLUMN attachments TEXT`);
+  } catch {}
+  
+  try {
+    db.exec(`ALTER TABLE threads ADD COLUMN channel_title TEXT`);
+  } catch {}
+  
+  try {
+    db.exec(`ALTER TABLE threads ADD COLUMN channel_avatar TEXT`);
+  } catch {}
+  
+  try {
+    db.exec(`ALTER TABLE threads ADD COLUMN image_url TEXT`);
+  } catch {}
+  
+  // Для колонки created_at в reactions - только если её нет
+  try {
+    db.exec(`ALTER TABLE reactions ADD COLUMN created_at INTEGER DEFAULT 0`);
+  } catch {}
 }
 
 function upsertMember({ channelId, userId, name }) {
@@ -312,37 +283,41 @@ function getMembersStats() {
 }
 
 function toggleReaction({ commentId, userId, emoji }) {
+  console.log('🔄 toggleReaction called:', { commentId, userId, emoji });
+  
   const existing = db.prepare(`
     SELECT emoji FROM reactions
     WHERE comment_id = ? AND user_id = ?
   `).get(commentId, userId);
+  
+  console.log('📌 Existing reaction:', existing);
 
   if (existing) {
     if (existing.emoji === emoji) {
       // убираем реакцию
+      console.log('🗑️ Removing reaction');
       db.prepare(`
         DELETE FROM reactions
         WHERE comment_id = ? AND user_id = ?
       `).run(commentId, userId);
-
       return { liked: false, emoji };
     } else {
       // меняем реакцию
+      console.log('🔄 Changing reaction from', existing.emoji, 'to', emoji);
       db.prepare(`
         UPDATE reactions
-        SET emoji = ?
+        SET emoji = ?, created_at = ?
         WHERE comment_id = ? AND user_id = ?
-      `).run(emoji, commentId, userId);
-
+      `).run(emoji, Date.now(), commentId, userId);
       return { liked: true, emoji };
     }
   } else {
     // новая реакция
+    console.log('✨ Adding new reaction');
     db.prepare(`
-      INSERT INTO reactions (comment_id, user_id, emoji)
-      VALUES (?, ?, ?)
-    `).run(commentId, userId, emoji);
-
+      INSERT INTO reactions (comment_id, user_id, emoji, created_at)
+      VALUES (?, ?, ?, ?)
+    `).run(commentId, userId, emoji, Date.now());
     return { liked: true, emoji };
   }
 }
@@ -361,19 +336,25 @@ function getThreadById(threadId) {
 // Обновленная функция getReactionsByCommentId с учетом текущего пользователя
 function getReactionsByCommentIdWithUser(commentId, currentUserId) {
   const stmt = db.prepare(`
-    SELECT emoji, user_id 
-    FROM reactions 
-    WHERE comment_id = ?
+    SELECT r.emoji, r.user_id, r.created_at, COALESCE(m.name, r.user_id) as name
+    FROM reactions r
+    LEFT JOIN channel_members m ON m.user_id = r.user_id
+    WHERE r.comment_id = ?
+    ORDER BY r.created_at DESC
   `);
   const allReactions = stmt.all(commentId);
   
-  // Группируем по emoji
   const grouped = {};
   for (const r of allReactions) {
     if (!grouped[r.emoji]) {
-      grouped[r.emoji] = { count: 0, liked: false };
+      grouped[r.emoji] = { count: 0, liked: false, users: [] };
     }
     grouped[r.emoji].count++;
+    grouped[r.emoji].users.push({
+      user_id: r.user_id,
+      name: r.name,
+      created_at: r.created_at
+    });
     if (String(r.user_id) === String(currentUserId)) {
       grouped[r.emoji].liked = true;
     }
@@ -414,6 +395,40 @@ function getThreadByToken(token) {
   return thread;
 }
 
+// Получить всех пользователей, поставивших реакцию на комментарий
+function getReactionUsers(commentId, emoji) {
+  const stmt = db.prepare(`
+    SELECT r.user_id, r.emoji, r.created_at, m.name
+    FROM reactions r
+    LEFT JOIN channel_members m ON m.user_id = r.user_id
+    WHERE r.comment_id = ?
+    ${emoji ? 'AND r.emoji = ?' : ''}
+    ORDER BY r.created_at DESC
+  `);
+  
+  if (emoji) {
+    return stmt.all(commentId, emoji);
+  }
+  return stmt.all(commentId);
+}
+
+// Получить все реакции комментария сгруппированные по пользователям
+function getAllReactionsWithUsers(commentId) {
+  console.log('🔍 getAllReactionsWithUsers for comment:', commentId);
+  
+  const stmt = db.prepare(`
+    SELECT r.emoji, r.user_id, r.created_at, COALESCE(m.name, r.user_id) as name
+    FROM reactions r
+    LEFT JOIN channel_members m ON m.user_id = r.user_id
+    WHERE r.comment_id = ?
+    ORDER BY r.created_at DESC
+  `);
+  const result = stmt.all(commentId);
+  console.log('📊 Query result:', result);
+  return result;
+}
+
+
 module.exports = {
   db,
   migrate,
@@ -431,5 +446,6 @@ module.exports = {
   toggleReaction,
   getReactionsByCommentIdWithUser,  
   getUserReaction,
-  getThreadByToken
+  getThreadByToken,
+  getAllReactionsWithUsers,
 };

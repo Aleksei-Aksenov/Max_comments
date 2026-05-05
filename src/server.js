@@ -14,6 +14,8 @@ const {
   getMembersStats,
   toggleReaction,
   getReactionsByCommentIdWithUser,
+  getAllReactionsWithUsers,
+  getUserReaction,
   db
 } = require('./db');
 const { addSubscriber, removeSubscriber, publishComment, publishReaction } = require('./realtime');
@@ -28,19 +30,53 @@ const { upsertMember } = require('./db');
 async function buildServer() {
   const app = Fastify({ logger: true });
 
-  app.post('/api/webhook', async (request, reply) => {
-    console.log('🔥 FULL UPDATE:', JSON.stringify(request.body, null, 2));
+  // ✅ Добавляем проверку secret для безопасности
+  const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET;
 
-    return reply.send({
-      ok: true,
-      received: request.body
-    });
+  app.post('/api/webhook', async (request, reply) => {
+    // Проверяем секрет
+    const receivedSecret = request.headers['x-max-bot-api-secret'];
+    if (WEBHOOK_SECRET && receivedSecret !== WEBHOOK_SECRET) {
+      console.error('❌ Invalid webhook secret');
+      return reply.code(403).send({ ok: false, error: 'Invalid secret' });
+    }
+    
+    console.log('📨 Webhook received:', JSON.stringify(request.body, null, 2));
+    
+    // ✅ Поддерживаем как одиночные события, так и массив
+    const updates = Array.isArray(request.body) ? request.body : [request.body];
+    
+    for (const update of updates) {
+      const type = update.update_type || update.event_context?.type;
+      
+      try {
+        if (type === 'message_created') {
+          await handleMessageCreated(update);
+        } else if (type === 'user_added') {
+          handleUserAdded(update);
+        } else if (type === 'user_removed') {
+          handleUserRemoved(update);
+        } else if (type === 'bot_started') {
+          console.log('🤖 Bot started event received');
+        } else {
+          console.log(`⚠️ Unknown event type: ${type}`);
+        }
+      } catch (error) {
+        console.error(`Webhook error for ${type}:`, error);
+        // Не возвращаем ошибку, продолжаем обработку остальных событий
+      }
+    }
+    
+    // Всегда возвращаем 200 OK, даже если были ошибки
+    return reply.code(200).send({ ok: true });
   });
 
   app.get('/', async (request, reply) => {
-  const query = request.url.includes('?') ? request.url.slice(request.url.indexOf('?')) : '';
-  return reply.redirect('/miniapp' + query);
-});
+    const query = request.url.includes('?') ? request.url.slice(request.url.indexOf('?')) : '';
+    return reply.redirect('/miniapp' + query);
+  });
+  
+ 
 
   app.get('/health', async () => ({ ok: true }));
 
@@ -600,6 +636,121 @@ async function buildServer() {
         cursor: pointer;
       }
 
+      .reaction-users-tooltip {
+        position: fixed;
+        background: #1c1c1e;
+        border-radius: 12px;
+        padding: 8px 0;
+        min-width: 150px;
+        max-width: 250px;
+        max-height: 200px;
+        overflow-y: auto;
+        z-index: 10001;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        pointer-events: none;
+      }
+
+      .tooltip-title {
+        padding: 8px 12px;
+        font-size: 13px;
+        font-weight: 600;
+        color: #8e8e93;
+        border-bottom: 0.5px solid rgba(255,255,255,0.1);
+      }
+
+      .tooltip-list {
+        padding: 4px 0;
+      }
+
+      .tooltip-user {
+        padding: 6px 12px;
+        font-size: 14px;
+        color: #ffffff;
+      }
+
+      .reaction-users-tooltip::-webkit-scrollbar {
+        width: 4px;
+      }
+
+      .reaction-users-tooltip::-webkit-scrollbar-track {
+        background: rgba(255,255,255,0.1);
+        border-radius: 2px;
+      }
+
+      .reaction-users-tooltip::-webkit-scrollbar-thumb {
+        background: rgba(255,255,255,0.3);
+        border-radius: 2px;
+      }  
+        
+      .reaction-users-modal {
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        background: #1c1c1e;
+        border-radius: 16px;
+        min-width: 260px;
+        max-width: 320px;
+        max-height: 70vh;
+        overflow: hidden;
+        z-index: 100000;
+        box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+      }
+
+      .reaction-users-header {
+        padding: 14px 16px;
+        font-size: 15px;
+        font-weight: 600;
+        color: #8e8e93;
+        border-bottom: 0.5px solid rgba(255,255,255,0.1);
+        text-align: center;
+        background: #1c1c1e;
+      }
+
+      .reaction-users-list {
+        max-height: 60vh;
+        overflow-y: auto;
+        background: #1c1c1e;
+      }
+
+      .reaction-user-item {
+        padding: 12px 16px;
+        font-size: 14px;
+        color: #ffffff;
+        border-bottom: 0.5px solid rgba(255,255,255,0.05);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 12px;
+      }
+
+      .reaction-user-item:last-child {
+        border-bottom: none;
+      }
+
+      .reaction-user-name {
+        flex: 1;
+        font-weight: 500;
+      }
+
+      .reaction-user-emojis {
+        font-size: 18px;
+        letter-spacing: 2px;
+      }      
+
+      .reaction-users-list::-webkit-scrollbar {
+        width: 4px;
+      }
+
+      .reaction-users-list::-webkit-scrollbar-track {
+        background: rgba(255,255,255,0.1);
+      }
+
+      .reaction-users-list::-webkit-scrollbar-thumb {
+        background: rgba(255,255,255,0.3);
+        border-radius: 2px;
+      }     
+
       /* ── Toast ── */
       .toast {
         position: fixed;
@@ -675,6 +826,20 @@ async function buildServer() {
           font-size: 28px;
           padding: 4px 8px;
         }
+
+        .reaction-users-modal {
+          min-width: 280px;
+          max-width: 90vw;
+        }
+        
+        .reaction-user-item {
+          padding: 10px 14px;
+        }
+        
+        .reaction-user-emojis {
+          font-size: 16px;
+        }
+
       }
     </style>
   </head>
@@ -1127,27 +1292,57 @@ async function buildServer() {
         }
         
         let pressTimer;
+        let isLongPress = false;
         
+        // ✅ Короткий тап (мобильные) - показать список пользователей с реакциями
+        div.addEventListener('click', (e) => {
+          // Если клик по кнопке реакции - не обрабатываем
+          if (e.target.closest('.reaction-btn')) return;
+          // Если клик по цитате - не обрабатываем
+          if (e.target.closest('.reply-quote')) return;
+          // Если выделен текст - не обрабатываем
+          if (window.getSelection && window.getSelection().toString().length > 0) return;
+          
+          // Проверяем, есть ли реакции у комментария
+          const hasReactions = c.reactions && Object.keys(c.reactions).length > 0;
+          if (hasReactions) {
+            showAllReactionsUsers(c, div);
+          } else {
+            // Если нет реакций, открываем меню выбора реакций
+            showReactionsModal(c, div);
+          }
+        });
+        
+        // ✅ Длинный тап (мобильные) - показать меню выбора реакций
         div.addEventListener('touchstart', (e) => {
+          isLongPress = false;
           pressTimer = setTimeout(() => {
+            isLongPress = true;
             const touch = e.touches[0];
             showReactionsModal(c, div, touch.clientX, touch.clientY);
           }, 500);
         });
         
-        div.addEventListener('touchend', () => {
+        div.addEventListener('touchend', (e) => {
           clearTimeout(pressTimer);
+          // Если был длинный тап - предотвращаем короткий
+          if (isLongPress) {
+            e.preventDefault();
+            isLongPress = false;
+          }
         });
         
         div.addEventListener('touchmove', () => {
           clearTimeout(pressTimer);
         });
         
+        // ✅ Правый клик (ПК) - меню выбора реакций
         div.addEventListener('contextmenu', (e) => {
           e.preventDefault();
           showReactionsModal(c, div, e.clientX, e.clientY);
         });
         
+        // ✅ Обработчик для цитаты
         if (c.reply_to_id) {
           const quote = div.querySelector('.reply-quote');
           if (quote) {
@@ -1167,12 +1362,91 @@ async function buildServer() {
         msgs.scrollTop = msgs.scrollHeight;
       }
 
+      // Показать всех пользователей, поставивших реакции на комментарий
+      function showAllReactionsUsers(c, element) {
+        // Собираем всех пользователей со всех реакций
+        const allUsers = [];
+        const reactions = c.reactions || {};
+        
+        for (const [emoji, data] of Object.entries(reactions)) {
+          if (data.users && data.users.length > 0) {
+            data.users.forEach(user => {
+              allUsers.push({
+                ...user,
+                emoji: emoji
+              });
+            });
+          }
+        }
+        
+        if (allUsers.length === 0) {
+          showToast('Нет реакций на этом комментарии');
+          return;
+        }
+        
+        // Удаляем предыдущее меню
+        const existing = document.querySelector('.reaction-users-modal');
+        if (existing) existing.remove();
+        
+        const modal = document.createElement('div');
+        modal.className = 'reaction-users-modal';
+        
+        const header = document.createElement('div');
+        header.className = 'reaction-users-header';
+        header.innerHTML = 'Реакции — ' + allUsers.length + ' ' + getDeclension(allUsers.length, 'человек', 'человека', 'человек');
+        modal.appendChild(header);
+        
+        const list = document.createElement('div');
+        list.className = 'reaction-users-list';
+        
+        // Группируем по пользователям (если пользователь поставил несколько реакций)
+        const usersMap = new Map();
+        allUsers.forEach(user => {
+          const key = user.user_id;
+          if (!usersMap.has(key)) {
+            usersMap.set(key, {
+              name: user.name,
+              emojis: []
+            });
+          }
+          usersMap.get(key).emojis.push(user.emoji);
+        });
+        
+        for (const [userId, userData] of usersMap) {
+          const item = document.createElement('div');
+          item.className = 'reaction-user-item';
+          const emojisStr = userData.emojis.join(' ');
+          item.innerHTML = '<span class="reaction-user-name">' + esc(userData.name) + '</span>' +
+            '<span class="reaction-user-emojis">' + emojisStr + '</span>';
+          list.appendChild(item);
+        }
+        
+        modal.appendChild(list);
+        document.body.appendChild(modal);
+        
+        // Позиционирование по центру экрана
+        const modalRect = modal.getBoundingClientRect();
+        modal.style.position = 'fixed';
+        modal.style.top = '50%';
+        modal.style.left = '50%';
+        modal.style.transform = 'translate(-50%, -50%)';
+        
+        // Закрытие по клику вне
+        setTimeout(() => {
+          document.addEventListener('click', function closeModal(e) {
+            if (!modal.contains(e.target)) {
+              modal.remove();
+              document.removeEventListener('click', closeModal);
+            }
+          });
+        }, 100);
+      }      
+
       function renderReactions(c, container) {
         if (!container) return;
 
         const reactions = c.reactions || {};
 
-        // если нет реакций — скрываем блок
         if (Object.keys(reactions).length === 0) {
           container.style.display = 'none';
           return;
@@ -1184,46 +1458,154 @@ async function buildServer() {
         for (const [emoji, data] of Object.entries(reactions)) {
           const btn = document.createElement('button');
           btn.className = 'reaction-btn';
-
-          if (data.liked) {
-            btn.classList.add('active');
-          }
-
-          // используем textContent и createElement вместо innerHTML
-          btn.textContent = emoji + ' ';
-          const countSpan = document.createElement('span');
-          countSpan.className = 'reaction-count';
-          countSpan.textContent = data.count;
-          btn.appendChild(countSpan);
-
+          if (data.liked) btn.classList.add('active');
+          
+          btn.innerHTML = emoji + ' <span class="reaction-count">' + data.count + '</span>';
+          
+          // ✅ Левый клик - ставим/удаляем реакцию
           btn.addEventListener('click', async (e) => {
             e.stopPropagation();
-
-            // 💥 координаты клика
+            
+            // Анимация
             const rect = btn.getBoundingClientRect();
-
-            // 🎈 показываем "вылетающий" emoji
-            showFloatingEmoji(
-              emoji,
-              rect.left + rect.width / 2,
-              rect.top
-            );
-
-            // 💥 анимация кнопки
+            showFloatingEmoji(emoji, rect.left + rect.width / 2, rect.top);
             btn.animate([
               { transform: 'scale(1)' },
               { transform: 'scale(1.3)' },
               { transform: 'scale(1)' }
-            ], {
-              duration: 200,
-              easing: 'ease-out'
-            });
-
+            ], { duration: 200, easing: 'ease-out' });
+            
+            // Отправляем реакцию (если уже есть - удалится)
             await sendReaction(c.id, emoji);
+          });
+          
+          // ✅ Правый клик / долгий тап - показываем список пользователей
+          btn.addEventListener('contextmenu', async (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            if (data.users && data.users.length > 0) {
+              showReactionUsersList(emoji, data.users);
+            } else {
+              showToast('Нет пользователей с этой реакцией');
+            }
+          });
+          
+          // Для мобильных - долгий тап
+          let pressTimer;
+          btn.addEventListener('touchstart', (e) => {
+            pressTimer = setTimeout(() => {
+              if (data.users && data.users.length > 0) {
+                showReactionUsersList(emoji, data.users);
+              }
+            }, 500);
+          });
+          btn.addEventListener('touchend', () => {
+            clearTimeout(pressTimer);
+          });
+          btn.addEventListener('touchmove', () => {
+            clearTimeout(pressTimer);
           });
 
           container.appendChild(btn);
         }
+      }
+
+      function showReactionUsersList(emoji, users) {
+        // Удаляем предыдущее меню
+        const existing = document.querySelector('.reaction-users-modal');
+        if (existing) existing.remove();
+        
+        const modal = document.createElement('div');
+        modal.className = 'reaction-users-modal';
+        
+        const header = document.createElement('div');
+        header.className = 'reaction-users-header';
+        header.innerHTML = emoji + ' — ' + users.length + ' ' + getDeclension(users.length, 'человек', 'человека', 'человек');
+        modal.appendChild(header);
+        
+        const list = document.createElement('div');
+        list.className = 'reaction-users-list';
+        
+        users.forEach(user => {
+          const item = document.createElement('div');
+          item.className = 'reaction-user-item';
+          item.textContent = user.name;
+          list.appendChild(item);
+        });
+        
+        modal.appendChild(list);
+        
+        document.body.appendChild(modal);
+        
+        // Закрытие по клику вне
+        setTimeout(() => {
+          document.addEventListener('click', function closeModal(e) {
+            if (!modal.contains(e.target)) {
+              modal.remove();
+              document.removeEventListener('click', closeModal);
+            }
+          });
+        }, 100);
+        
+        // Закрытие через 5 секунд
+        setTimeout(() => {
+          if (modal.parentNode) modal.remove();
+        }, 5000);
+      }
+
+      // ✅ Показать список пользователей, поставивших реакцию
+      function showReactionUsers(btn, emoji, users) {
+        // Удаляем предыдущий тултип
+        const existingTooltip = document.querySelector('.reaction-users-tooltip');
+        if (existingTooltip) existingTooltip.remove();
+        
+        if (!users || users.length === 0) return;
+        
+        const tooltip = document.createElement('div');
+        tooltip.className = 'reaction-users-tooltip';
+        
+        const title = document.createElement('div');
+        title.className = 'tooltip-title';
+        title.textContent = emoji + ' — ' + users.length + ' ' + getDeclension(users.length, 'человек', 'человека', 'человек');
+        tooltip.appendChild(title);
+        
+        const list = document.createElement('div');
+        list.className = 'tooltip-list';
+        users.forEach(user => {
+          const item = document.createElement('div');
+          item.className = 'tooltip-user';
+          item.textContent = user.name;
+          list.appendChild(item);
+        });
+        tooltip.appendChild(list);
+        
+        const rect = btn.getBoundingClientRect();
+        tooltip.style.position = 'fixed';
+        tooltip.style.left = rect.left + 'px';
+        tooltip.style.bottom = (window.innerHeight - rect.top + 10) + 'px';
+        
+        document.body.appendChild(tooltip);
+        
+        btn.addEventListener('mouseleave', () => {
+          tooltip.remove();
+        });
+      }
+
+      function showReactionUsersToast(emoji, users) {
+        if (!users || users.length === 0) return;
+        
+        const names = users.map(u => u.name).join(', ');
+        showToast(emoji + ' — ' + names);
+      }
+
+      function getDeclension(number, one, two, five) {
+        const n = Math.abs(number);
+        n %= 100;
+        if (n >= 5 && n <= 20) return five;
+        n %= 10;
+        if (n === 1) return one;
+        if (n >= 2 && n <= 4) return two;
+        return five;
       }
 
       async function sendReaction(commentId, emoji) {
@@ -1236,6 +1618,7 @@ async function buildServer() {
           });
           const data = await res.json();
           console.log('Reaction response:', data);
+          
           if (data.ok) {
             const msgDiv = document.querySelector('.msg[data-id="' + commentId + '"]');
             if (msgDiv) {
@@ -1258,6 +1641,14 @@ async function buildServer() {
           showToast('Ошибка соединения');
         }
       }
+
+      function getDeclension(number, one, two, five) {
+        const n = Math.abs(number);
+        if (n >= 5 && n <= 20) return five;
+        if (n % 10 === 1) return one;
+        if (n % 10 >= 2 && n % 10 <= 4) return two;
+        return five;
+      }      
 
       let lastId = 0;
       async function loadComments(session) {
@@ -1529,74 +1920,96 @@ async function buildServer() {
   app.post('/api/comments/:id/reaction', async (request, reply) => {
     try {
       console.log('🔥 REACTION ENDPOINT CALLED');
+      console.log('Request params:', request.params);
+      console.log('Request body:', request.body);
+      
       const initData = request.body?.initData;
       const emoji = request.body?.emoji || '👍';
-      
       const validation = validateInitData(initData, config.maxBotToken);
-      if (!validation.ok) return reply.code(401).send(validation);
+      if (!validation.ok) {
+        console.log('❌ Validation failed:', validation);
+        return reply.code(401).send(validation);
+      }
 
       const user = extractUser(validation.data);
-      if (!user?.user_id) return reply.code(401).send({ ok: false });
+      if (!user?.user_id) {
+        console.log('❌ No user_id');
+        return reply.code(401).send({ ok: false, error: 'user_missing' });
+      }
+      console.log('👤 User:', user.user_id);
 
       const commentId = Number(request.params.id);
+      console.log('💬 Comment ID:', commentId);
       
-      // Получаем комментарий с thread_id
       const comment = db.prepare('SELECT * FROM comments WHERE id = ?').get(commentId);
-      
       if (!comment) {
+        console.log('❌ Comment not found:', commentId);
         return reply.code(404).send({ ok: false, error: 'comment_not_found' });
       }
+      console.log('📝 Comment found, thread_id:', comment.thread_id);
       
-      // Получаем thread
-      const thread = db.prepare(`
-        SELECT id, channel_id, mid 
-        FROM threads 
-        WHERE id = ?
-      `).get(comment.thread_id);
-      
+      const thread = db.prepare(`SELECT id, channel_id, mid FROM threads WHERE id = ?`).get(comment.thread_id);
       if (!thread) {
-        return reply.code(404).send({ 
-          ok: false, 
-          error: 'thread_not_found', 
-          commentId, 
-          threadId: comment.thread_id 
-        });
+        console.log('❌ Thread not found for thread_id:', comment.thread_id);
+        return reply.code(404).send({ ok: false, error: 'thread_not_found', threadId: comment.thread_id });
       }
+      console.log('📌 Thread found:', thread.channel_id, thread.mid);
 
       const result = toggleReaction({
         commentId,
         userId: String(user.user_id),
         emoji,
       });
+      console.log('🔄 Toggle reaction result:', result);
 
-      // Получаем все реакции для комментария
-      const reactions = getReactionsByCommentIdWithUser(
-        commentId,
-        String(user.user_id)
-      );
-      
-      // Проверяем, какую реакцию поставил пользователь
-      const userReaction = db.prepare(`
-        SELECT emoji FROM reactions 
-        WHERE comment_id = ? AND user_id = ?
-      `).get(commentId, String(user.user_id));
-      
-      if (userReaction && reactions[userReaction.emoji]) {
-        reactions[userReaction.emoji].liked = true;
+      // ✅ Получаем реакции с информацией о пользователях
+      let reactionsWithUsers = [];
+      try {
+        reactionsWithUsers = getAllReactionsWithUsers(commentId);
+        console.log('👥 Reactions with users:', reactionsWithUsers.length);
+      } catch (err) {
+        console.error('❌ getAllReactionsWithUsers error:', err.message);
       }
+      
+      // Группируем для удобства фронтенда
+      const reactions = {};
+      for (const r of reactionsWithUsers) {
+        if (!reactions[r.emoji]) {
+          reactions[r.emoji] = { 
+            count: 0, 
+            liked: false,
+            users: []
+          };
+        }
+        reactions[r.emoji].count++;
+        reactions[r.emoji].users.push({
+          user_id: r.user_id,
+          name: r.name || String(r.user_id),
+          created_at: r.created_at
+        });
+        if (String(r.user_id) === String(user.user_id)) {
+          reactions[r.emoji].liked = true;
+        }
+      }
+      console.log('📊 Grouped reactions:', Object.keys(reactions));
 
       // Broadcast через SSE
-      publishReaction({
-        channelId: thread.channel_id,
-        mid: thread.mid,
-        reaction: {
-          commentId,
-          userId: String(user.user_id),
-          liked: result.liked,
-          emoji: result.emoji,
-          reactions,
-        },
-      });
+      try {
+        publishReaction({
+          channelId: thread.channel_id,
+          mid: thread.mid,
+          reaction: {
+            commentId,
+            userId: String(user.user_id),
+            liked: result.liked,
+            emoji: result.emoji,
+            reactions,
+          },
+        });
+        console.log('📡 Reaction broadcasted');
+      } catch (err) {
+        console.error('❌ publishReaction error:', err.message);
+      }
 
       return reply.send({
         ok: true,
@@ -1605,7 +2018,8 @@ async function buildServer() {
         reactions,
       });
     } catch (err) {
-      console.error('Reaction error:', err);
+      console.error('❌ Reaction endpoint error:', err);
+      console.error('Stack:', err.stack);
       return reply.code(500).send({ ok: false, error: err.message });
     }
   });
@@ -1852,6 +2266,7 @@ async function buildServer() {
     }
   });
 
+
   return app;
 }
 
@@ -1860,7 +2275,75 @@ async function start() {
   migrate();
 
   const app = await buildServer();
+  
+  // Запускаем основной сервер на порту 3000
   await app.listen({ port: config.port, host: '0.0.0.0' });
+  console.log(`✅ Main server listening on http://0.0.0.0:${config.port}`);
+  
+  // ✅ Запускаем дополнительный сервер для webhook на порту 4000
+  // Fastify не может слушать несколько портов из одного инстанса,
+  // поэтому создаем отдельный http сервер
+  const http = require('http');
+  
+  // Создаем отдельный сервер для webhook
+  const webhookHandler = async (req, res) => {
+    // Устанавливаем CORS headers
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    
+    if (req.method === 'OPTIONS') {
+      res.writeHead(200);
+      res.end();
+      return;
+    }
+    
+    if (req.method !== 'POST') {
+      res.writeHead(405, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, error: 'Method not allowed' }));
+      return;
+    }
+    
+    let body = '';
+    req.on('data', chunk => { body += chunk.toString(); });
+    req.on('end', async () => {
+      try {
+        const update = JSON.parse(body);
+        console.log('📨 Webhook received:', JSON.stringify(update, null, 2));
+        
+        const updates = Array.isArray(update) ? update : [update];
+        
+        for (const upd of updates) {
+          const type = upd.update_type || upd.event_context?.type;
+          try {
+            if (type === 'message_created') {
+              await handleMessageCreated(upd);
+            } else if (type === 'user_added') {
+              handleUserAdded(upd);
+            } else if (type === 'user_removed') {
+              handleUserRemoved(upd);
+            }
+          } catch (error) {
+            console.error(`Webhook handler error for ${type}:`, error);
+          }
+        }
+        
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true }));
+      } catch (err) {
+        console.error('Webhook parse error:', err);
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, error: 'Invalid JSON' }));
+      }
+    });
+  };
+  
+  const webhookServer = http.createServer(webhookHandler);
+  const WEBHOOK_PORT = process.env.WEBHOOK_PORT || 4000;
+  
+  webhookServer.listen(WEBHOOK_PORT, '0.0.0.0', () => {
+    console.log(`✅ Webhook server listening on http://0.0.0.0:${WEBHOOK_PORT}`);
+  });
 }
 
 start().catch((err) => {
