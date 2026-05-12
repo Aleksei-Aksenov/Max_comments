@@ -26,10 +26,35 @@ const {
 } = require('./webhook_handlers');
 const { fetchAllChannelMembers } = require('./max_api');
 const { upsertMember } = require('./db');
+const fastifyRateLimit = require('@fastify/rate-limit');
 
 async function buildServer() {
   const app = Fastify({ logger: true });
 
+  
+  // ✅ Rate Limiting
+  await app.register(fastifyRateLimit, {
+    max: 100,                    // максимум запросов
+    timeWindow: '1 minute',      // за 1 минуту
+    keyGenerator: (req) => {
+      // Учитываем реальный IP при использовании прокси
+      return req.headers['x-forwarded-for'] || req.ip;
+    },
+    errorResponse: {
+      code: 429,
+      error: 'Too Many Requests',
+      message: 'Превышен лимит запросов. Пожалуйста, повторите позже.'
+    },
+    skip: (req) => {
+      // Пропускаем rate limiting для webhook (чтобы не блокировать MAX)
+      return req.url === '/api/webhook';
+    }
+  });
+
+  app.get('/test-rate-limit', async (request, reply) => {
+    return reply.send({ ok: true });
+  });
+  
   // ✅ Добавляем проверку secret для безопасности
   const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET;
 

@@ -22,9 +22,10 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@fastify/rate-limit": "^8.0.0",
+    "@maxhub/max-bot-api": "^0.2.2",
     "better-sqlite3": "^11.8.0",
     "dotenv": "^16.4.5",
-    "fastify": "^4.28.1",
-    "@maxhub/max-bot-api": "^0.2.2"
+    "fastify": "^4.28.1"
   }
 }
